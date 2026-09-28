@@ -4,7 +4,8 @@ import 'screens/vargani_screen.dart';
 import 'screens/prasad_dengani_screen.dart';
 import 'screens/kharch_screen.dart';
 import 'screens/mahaprasad_kharch_screen.dart';
-import 'screens/database_backup_restore_screen.dart';
+import 'screens/settings_screen.dart';
+import 'database/database_helper.dart';
 import 'pdf/annual_report_pdf.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
@@ -117,7 +118,28 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
+    }
+  }
+
   Widget dashboardButton({
     required BuildContext context,
     required String title,
@@ -226,6 +248,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const SettingsScreen(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -380,22 +416,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => const MahaprasadKharchScreen(),
-                      ),
-                    );
-                  },
-                ),
-
-                dashboardButton(
-                  context: context,
-                  title: 'बॅकअप आणि पुनर्स्थापना',
-                  subtitle: 'डेटाबेसची सुरक्षित प्रत तयार किंवा परत आणा',
-                  icon: Icons.storage,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            const DatabaseBackupRestoreScreen(),
                       ),
                     );
                   },

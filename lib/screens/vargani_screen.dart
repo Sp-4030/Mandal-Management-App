@@ -441,7 +441,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
                     duration: const Duration(milliseconds: 450),
                     curve: Curves.easeOutCubic,
                     builder: (context, amount, child) => Text(
-                      '₹ ${amount.toStringAsFixed(2)}',
+                      '₹ ${amount.toStringAsFixed(0)}',
                       textAlign: TextAlign.right,
                       style: const TextStyle(
                         color: _ink,
@@ -525,7 +525,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
                                 ),
                                 const SizedBox(height: 3),
                                 Text(
-                                  '₹ ${amount.toStringAsFixed(2)}',
+                                  '₹ ${amount.toStringAsFixed(0)}',
                                   textAlign: TextAlign.right,
                                   style: const TextStyle(
                                     color: _deepSaffron,

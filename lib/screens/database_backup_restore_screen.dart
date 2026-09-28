@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 
 import '../database/database_helper.dart';
+import 'migration_menu_screen.dart';
 
 enum _ExportAction { save, share }
 
@@ -198,6 +199,22 @@ class _DatabaseBackupRestoreScreenState
                 title: 'बॅकअप पुनर्स्थापित करा',
                 subtitle: 'निवडलेल्या प्रतिमधून डेटा परत आणा',
                 onPressed: _isBusy ? null : _importDatabase,
+              ),
+              const SizedBox(height: 16),
+              _actionButton(
+                icon: Icons.swap_horiz_rounded,
+                title: 'मंडळ डेटा ट्रान्सफर (मायग्रेशन)',
+                subtitle: 'नवीन खजिनदारांच्या फोनवर संपूर्ण डेटा थेट पाठवा किंवा आणा',
+                onPressed: _isBusy
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const MigrationMenuScreen(),
+                          ),
+                        );
+                      },
               ),
               const SizedBox(height: 24),
               Text(

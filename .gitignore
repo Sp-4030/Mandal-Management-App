@@ -169,6 +169,6 @@ web/flutter_service_worker.js
 *.db-wal
 *.db-shm
 
-# Local SQLite folders
-database/
-databases/
+/database/
+/databases/
+!lib/database/
