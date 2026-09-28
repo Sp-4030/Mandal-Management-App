@@ -148,6 +148,15 @@ class AnnualReportPdf {
           _imageCell(
             image,
             alignment: cellAlignments[index],
+
+            // Only NAME column gets reduced padding.
+            // index 1 = नाव
+            padding: index == 1
+                ? const pw.EdgeInsets.symmetric(
+              horizontal: 2,
+              vertical: 1,
+            )
+                : null,
           ),
         );
       }
@@ -238,13 +247,6 @@ class AnnualReportPdf {
           // ====================================================
 
           header: (context) {
-            // FIX:
-            // Do NOT use mutable isFirstReportPage.
-            //
-            // pageNumber is the actual PDF page number.
-            // Therefore the main title appears only on PDF
-            // page 1 and never disappears because of header
-            // evaluation order.
             final showReportTitle =
                 context.pageNumber == 1;
 
@@ -402,7 +404,7 @@ class AnnualReportPdf {
 
     const moneyColumnFontSizes = [
       10.8,
-      11.5,
+      13.0,
       10.8,
     ];
 
@@ -1269,18 +1271,18 @@ class AnnualReportPdf {
       _RenderedText rendered, {
         pw.Alignment alignment =
             pw.Alignment.center,
+        pw.EdgeInsets? padding,
       }) {
     return pw.Container(
       width: double.infinity,
       alignment: alignment,
 
-      // Reduced vertical padding so
-      // more rows fit on A4 page.
-      padding:
-      const pw.EdgeInsets.symmetric(
-        horizontal: 5,
-        vertical: 3.8,
-      ),
+      // Name column uses smaller padding.
+      padding: padding ??
+          const pw.EdgeInsets.symmetric(
+            horizontal: 5,
+            vertical: 3.8,
+          ),
 
       child: pw.Image(
         pw.MemoryImage(
