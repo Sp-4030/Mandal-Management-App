@@ -250,37 +250,15 @@ class _MahaprasadKharchScreenState extends State<MahaprasadKharchScreen> {
   // ============================================================
 
   Widget _buildHeader() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-      decoration: BoxDecoration(border: Border.all()),
-      child: const Row(
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(4, 8, 4, 10),
+      child: Row(
         children: [
-          SizedBox(
-            width: 45,
-            child: Text('आ न', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(
-              'साहित्य',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          Expanded(
-            flex: 4,
-            child: Text(
-              'वस्तू खरेदीदारचे नावे',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          SizedBox(
-            width: 75,
-            child: Text(
-              'खर्च',
-              style: TextStyle(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.right,
-            ),
+          Icon(Icons.shopping_basket_outlined, color: Color(0xFFB94D00)),
+          SizedBox(width: 9),
+          Text(
+            'खरेदी नोंदी',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
           ),
         ],
       ),
@@ -292,41 +270,76 @@ class _MahaprasadKharchScreenState extends State<MahaprasadKharchScreen> {
   // ============================================================
 
   Widget _buildRow(MahaprasadKharch item, int index) {
-    return InkWell(
-      onTap: () {
-        _showAddEditDialog(item: item);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-        decoration: const BoxDecoration(
-          border: Border(
-            left: BorderSide(),
-            right: BorderSide(),
-            bottom: BorderSide(),
-          ),
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.95, end: 1),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, 7 * (1 - value)),
+          child: child,
         ),
-        child: Row(
-          children: [
-            SizedBox(width: 45, child: Text('${index + 1}')),
-            Expanded(flex: 3, child: Text(item.item)),
-            Expanded(flex: 4, child: Text(item.buyerName)),
-            SizedBox(
-              width: 75,
-              child: Text(
-                '₹${item.amount.toStringAsFixed(0)}',
-                textAlign: TextAlign.right,
-              ),
+      ),
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 9),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => _showAddEditDialog(item: item),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 19,
+                  backgroundColor: const Color(0xFFFFF0E1),
+                  foregroundColor: const Color(0xFFB94D00),
+                  child: Text('${index + 1}'),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.item,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        item.buyerName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Color(0xFF756A5D)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '₹${item.amount.toStringAsFixed(0)}',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Color(0xFFB94D00),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'बदला',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: () => _showAddEditDialog(item: item),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            SizedBox(
-              width: 42,
-              child: IconButton(
-                tooltip: 'बदला',
-                padding: EdgeInsets.zero,
-                icon: const Icon(Icons.edit, size: 20),
-                onPressed: () => _showAddEditDialog(item: item),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -346,11 +359,12 @@ class _MahaprasadKharchScreenState extends State<MahaprasadKharchScreen> {
           IconButton(onPressed: _loadData, icon: const Icon(Icons.refresh)),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
           _showAddEditDialog();
         },
-        child: const Icon(Icons.add),
+        icon: const Icon(Icons.add),
+        label: const Text('नवीन खर्च'),
       ),
       body: RefreshIndicator(
         onRefresh: _loadData,
@@ -394,15 +408,23 @@ class _MahaprasadKharchScreenState extends State<MahaprasadKharchScreen> {
                             const Text(
                               'एकूण खर्च',
                               style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFB94D00),
                               ),
                             ),
-                            Text(
-                              '₹${total.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+                            TweenAnimationBuilder<double>(
+                              tween: Tween(begin: 0, end: total),
+                              duration: const Duration(milliseconds: 420),
+                              curve: Curves.easeOutCubic,
+                              builder: (context, amount, child) => Text(
+                                '₹${amount.toStringAsFixed(0)}',
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF25231F),
+                                ),
                               ),
                             ),
                           ],
@@ -425,15 +447,22 @@ class _MahaprasadKharchScreenState extends State<MahaprasadKharchScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(30),
                         decoration: const BoxDecoration(
-                          border: Border(
-                            left: BorderSide(),
-                            right: BorderSide(),
-                            bottom: BorderSide(),
-                          ),
+                          color: Colors.white,
+                          borderRadius: BorderRadius.all(Radius.circular(18)),
                         ),
-                        child: const Text(
-                          'या वर्षासाठी कोणताही खर्च उपलब्ध नाही.',
-                          textAlign: TextAlign.center,
+                        child: const Column(
+                          children: [
+                            Icon(
+                              Icons.shopping_basket_outlined,
+                              color: Color(0xFFB94D00),
+                              size: 32,
+                            ),
+                            SizedBox(height: 10),
+                            Text(
+                              'या वर्षासाठी कोणताही खर्च उपलब्ध नाही.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
                         ),
                       )
                     else

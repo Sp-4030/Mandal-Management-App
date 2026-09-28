@@ -330,17 +330,30 @@ class _KharchScreenState extends State<KharchScreen> {
                           children: [
                             const Icon(Icons.calendar_month),
                             const SizedBox(width: 10),
-                            const Text(
-                              'मागील वर्ष:',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
+                            const Expanded(
+                              child: Text(
+                                'वर्ष',
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 10),
-                            Text(
-                              '$previousYear',
-                              style: const TextStyle(fontSize: 17),
+                            DropdownButton<int>(
+                              value: previousYear,
+                              underline: const SizedBox.shrink(),
+                              items: List.generate(6, (index) {
+                                final year = DateTime.now().year - index;
+                                return DropdownMenuItem<int>(
+                                  value: year,
+                                  child: Text('$year'),
+                                );
+                              }),
+                              onChanged: (year) async {
+                                if (year == null) return;
+                                setState(() => previousYear = year);
+                                await loadData();
+                              },
                             ),
                           ],
                         ),
@@ -356,8 +369,9 @@ class _KharchScreenState extends State<KharchScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.indigo.shade50,
+                        color: const Color(0xFFFFF0E1),
                         borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFF0D2B5)),
                       ),
                       child: Text(
                         'मागील वर्षाचा खर्च',
@@ -379,27 +393,28 @@ class _KharchScreenState extends State<KharchScreen> {
                         padding: const EdgeInsets.all(8),
                         child: Column(
                           children: [
-                            buildTable(),
-
-                            const Divider(),
-
-                            // ==================================================
-                            // TOTAL
-                            // ==================================================
                             Align(
                               alignment: Alignment.centerRight,
                               child: Padding(
                                 padding: const EdgeInsets.all(8),
-                                child: Text(
-                                  'Total: ${money(total)}',
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                                child: TweenAnimationBuilder<double>(
+                                  tween: Tween(begin: 0, end: total),
+                                  duration: const Duration(milliseconds: 420),
+                                  curve: Curves.easeOutCubic,
+                                  builder: (context, amount, child) => Text(
+                                    'एकूण खर्च: ${money(amount)}',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFFB94D00),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
 
+                            const Divider(),
+                            buildTable(),
                             const SizedBox(height: 5),
 
                             // ==================================================
@@ -407,7 +422,7 @@ class _KharchScreenState extends State<KharchScreen> {
                             // ==================================================
                             Align(
                               alignment: Alignment.centerRight,
-                              child: ElevatedButton.icon(
+                              child: FilledButton.icon(
                                 onPressed: () {
                                   showKharchDialog();
                                 },

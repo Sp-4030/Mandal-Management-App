@@ -38,6 +38,11 @@ flutter:
     - assets/fonts/NotoSerifDevanagari-Regular.ttf
     - assets/images/hindvi_logo.png
 
+  fonts:
+    - family: HindviDevanagari
+      fonts:
+        - asset: assets/fonts/NotoSerifDevanagari-Regular.ttf
+
 flutter_launcher_icons:
   android: true
   ios: true

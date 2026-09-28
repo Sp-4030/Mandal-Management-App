@@ -5,26 +5,23 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hindvi_app/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('dashboard presents the mandal workflows', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const HindviApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('हिंदवी स्वराज्य'), findsNWidgets(2));
+    expect(find.text('मंडळ व्यवस्थापन प्रणाली'), findsOneWidget);
+    expect(find.text('वर्गणी'), findsOneWidget);
+    expect(find.text('प्रसाद देणगी'), findsOneWidget);
+    expect(find.text('प्रसाद साहित्य'), findsOneWidget);
+    expect(find.text('वार्षिक अहवाल'), findsOneWidget);
+    expect(find.text('बॅकअप आणि पुनर्स्थापना'), findsOneWidget);
   });
 }

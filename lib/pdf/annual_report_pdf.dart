@@ -1,6 +1,6 @@
 import 'dart:ui' as ui;
 
-import 'package:flutter/painting.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -24,7 +24,24 @@ class AnnualReportPdf {
   static const PdfColor _totalColor = PdfColor(1.0, 0.95, 0.88);
   static const PdfColor _white = PdfColor(1, 1, 1);
 
-  static Future<void> generateAndPrint({required int year}) async {
+  static Future<void> generateAndPrint({required int year}) {
+    return _generate(year: year);
+  }
+
+  static Future<void> preview({
+    required int year,
+    required BuildContext context,
+  }) {
+    return _generate(year: year, previewContext: context);
+  }
+
+  static Future<void> _generate({
+    required int year,
+    BuildContext? previewContext,
+  }) async {
+    final previewNavigator = previewContext == null
+        ? null
+        : Navigator.of(previewContext);
     final db = DatabaseHelper.instance;
 
     final vargani = await db.getVargani(year);
@@ -44,13 +61,13 @@ class AnnualReportPdf {
     final Map<String, _RenderedText> textCache = {};
 
     Future<_RenderedText> getTextImage(
-        String text, {
-          double fontSize = 12,
-          bool bold = false,
-          TextAlign textAlign = TextAlign.left,
-          double maxWidth = 900,
-          ui.Color color = const ui.Color(0xFF172B30),
-        }) async {
+      String text, {
+      double fontSize = 12,
+      bool bold = false,
+      TextAlign textAlign = TextAlign.left,
+      double maxWidth = 900,
+      ui.Color color = const ui.Color(0xFF172B30),
+    }) async {
       final key =
           '$text|$fontSize|$bold|${textAlign.index}|$maxWidth|${color.hashCode}';
 
@@ -75,22 +92,21 @@ class AnnualReportPdf {
     }
 
     Future<pw.TableRow> makeRow(
-        List<String> values, {
-          required List<TextAlign> textAlignments,
-          required List<pw.Alignment> cellAlignments,
-          required List<double> maxWidths,
-          double fontSize = 10.8,
-          List<double>? columnFontSizes,
-          bool bold = false,
-          bool header = false,
-          PdfColor? backgroundColor,
-        }) async {
+      List<String> values, {
+      required List<TextAlign> textAlignments,
+      required List<pw.Alignment> cellAlignments,
+      required List<double> maxWidths,
+      double fontSize = 10.8,
+      List<double>? columnFontSizes,
+      bool bold = false,
+      bool header = false,
+      PdfColor? backgroundColor,
+    }) async {
       final cells = <pw.Widget>[];
 
       for (var index = 0; index < values.length; index++) {
         final cellFontSize =
-        (columnFontSizes != null &&
-            index < columnFontSizes.length)
+            (columnFontSizes != null && index < columnFontSizes.length)
             ? columnFontSizes[index]
             : fontSize;
 
@@ -105,12 +121,7 @@ class AnnualReportPdf {
               : const ui.Color(0xFF172B30),
         );
 
-        cells.add(
-          _imageCell(
-            image,
-            alignment: cellAlignments[index],
-          ),
-        );
+        cells.add(_imageCell(image, alignment: cellAlignments[index]));
       }
 
       return pw.TableRow(
@@ -182,12 +193,7 @@ class AnnualReportPdf {
           pageFormat: PdfPageFormat.a4,
 
           // Reduced margins so more rows fit on one page.
-          margin: const pw.EdgeInsets.fromLTRB(
-            30,
-            20,
-            30,
-            24,
-          ),
+          margin: const pw.EdgeInsets.fromLTRB(30, 20, 30, 24),
 
           maxPages: 10000,
 
@@ -215,33 +221,18 @@ class AnnualReportPdf {
                     decoration: const pw.BoxDecoration(
                       color: _sectionColor,
                       border: pw.Border(
-                        top: pw.BorderSide(
-                          color: _accentColor,
-                          width: 1.0,
-                        ),
-                        bottom: pw.BorderSide(
-                          color: _accentColor,
-                          width: 1.0,
-                        ),
+                        top: pw.BorderSide(color: _accentColor, width: 1.0),
+                        bottom: pw.BorderSide(color: _accentColor, width: 1.0),
                       ),
                     ),
                     child: pw.Column(
                       mainAxisSize: pw.MainAxisSize.min,
                       children: [
-                        _image(
-                          reportTitle,
-                          width: 220,
-                        ),
+                        _image(reportTitle, width: 220),
                         pw.SizedBox(height: 2),
-                        _image(
-                          reportSubtitle,
-                          width: 250,
-                        ),
+                        _image(reportSubtitle, width: 250),
                         pw.SizedBox(height: 1),
-                        _image(
-                          reportYear,
-                          width: 140,
-                        ),
+                        _image(reportYear, width: 140),
                       ],
                     ),
                   ),
@@ -252,25 +243,16 @@ class AnnualReportPdf {
                 // ==================================================
                 // SECTION HEADING
                 // ==================================================
-
                 pw.Container(
                   width: double.infinity,
-                  padding: const pw.EdgeInsets.symmetric(
-                    vertical: 5,
-                  ),
+                  padding: const pw.EdgeInsets.symmetric(vertical: 5),
                   decoration: const pw.BoxDecoration(
                     color: _sectionColor,
                     border: pw.Border(
-                      bottom: pw.BorderSide(
-                        color: _brandColor,
-                        width: 1,
-                      ),
+                      bottom: pw.BorderSide(color: _brandColor, width: 1),
                     ),
                   ),
-                  child: _image(
-                    sectionTitle,
-                    width: 300,
-                  ),
+                  child: _image(sectionTitle, width: 300),
                 ),
 
                 pw.SizedBox(height: 6),
@@ -285,11 +267,8 @@ class AnnualReportPdf {
                 child: pw.Table(
                   tableWidth: pw.TableWidth.max,
                   defaultVerticalAlignment:
-                  pw.TableCellVerticalAlignment.middle,
-                  border: pw.TableBorder.all(
-                    color: _borderColor,
-                    width: 0.55,
-                  ),
+                      pw.TableCellVerticalAlignment.middle,
+                  border: pw.TableBorder.all(color: _borderColor, width: 0.55),
                   columnWidths: columnWidths,
                   children: rows,
                 ),
@@ -316,18 +295,10 @@ class AnnualReportPdf {
       pw.Alignment.center,
     ];
 
-    const moneyMaxWidths = [
-      26.0,
-      260.0,
-      100.0,
-    ];
+    const moneyMaxWidths = [26.0, 260.0, 100.0];
 
     // Keep name readable.
-    const moneyColumnFontSizes = [
-      10.8,
-      11.5,
-      10.8,
-    ];
+    const moneyColumnFontSizes = [10.8, 11.5, 10.8];
 
     // Balanced columns.
     const moneyColumnWidths = <int, pw.TableColumnWidth>{
@@ -363,11 +334,7 @@ class AnnualReportPdf {
 
       prasadDenganiRows.add(
         await makeRow(
-          [
-            '${index + 1}',
-            name,
-            _money(amount),
-          ],
+          ['${index + 1}', name, _money(amount)],
           textAlignments: moneyTextAlignments,
           cellAlignments: moneyCellAlignments,
           maxWidths: moneyMaxWidths,
@@ -390,11 +357,7 @@ class AnnualReportPdf {
 
     final prasadSahityaRows = <pw.TableRow>[
       await makeRow(
-        const [
-          'आ न',
-          'नाव',
-          'देणारे साहित्य',
-        ],
+        const ['आ न', 'नाव', 'देणारे साहित्य'],
         textAlignments: const [
           TextAlign.center,
           TextAlign.center,
@@ -405,16 +368,8 @@ class AnnualReportPdf {
           pw.Alignment.center,
           pw.Alignment.center,
         ],
-        maxWidths: const [
-          22,
-          150,
-          290,
-        ],
-        columnFontSizes: const [
-          10.8,
-          11.5,
-          10.8,
-        ],
+        maxWidths: const [22, 150, 290],
+        columnFontSizes: const [10.8, 11.5, 10.8],
         header: true,
       ),
     ];
@@ -439,16 +394,8 @@ class AnnualReportPdf {
             pw.Alignment.center,
             pw.Alignment.center,
           ],
-          maxWidths: const [
-            22,
-            150,
-            290,
-          ],
-          columnFontSizes: const [
-            10.8,
-            11.5,
-            10.8,
-          ],
+          maxWidths: const [22, 150, 290],
+          columnFontSizes: const [10.8, 11.5, 10.8],
         ),
       );
     }
@@ -459,11 +406,7 @@ class AnnualReportPdf {
 
     final aartiRows = <pw.TableRow>[
       await makeRow(
-        const [
-          'आ न',
-          'नाव',
-          'रक्कम',
-        ],
+        const ['आ न', 'नाव', 'रक्कम'],
         textAlignments: moneyTextAlignments,
         cellAlignments: moneyCellAlignments,
         maxWidths: moneyMaxWidths,
@@ -483,11 +426,7 @@ class AnnualReportPdf {
 
       aartiRows.add(
         await makeRow(
-          [
-            '${index + 1}',
-            item['name']?.toString() ?? '',
-            _money(amount),
-          ],
+          ['${index + 1}', item['name']?.toString() ?? '', _money(amount)],
           textAlignments: moneyTextAlignments,
           cellAlignments: moneyCellAlignments,
           maxWidths: moneyMaxWidths,
@@ -510,11 +449,7 @@ class AnnualReportPdf {
 
     final varganiRows = <pw.TableRow>[
       await makeRow(
-        const [
-          'आ न',
-          'नाव',
-          'रक्कम',
-        ],
+        const ['आ न', 'नाव', 'रक्कम'],
         textAlignments: moneyTextAlignments,
         cellAlignments: moneyCellAlignments,
         maxWidths: moneyMaxWidths,
@@ -534,11 +469,7 @@ class AnnualReportPdf {
 
       varganiRows.add(
         await makeRow(
-          [
-            '${index + 1}',
-            item['name']?.toString() ?? '',
-            _money(amount),
-          ],
+          ['${index + 1}', item['name']?.toString() ?? '', _money(amount)],
           textAlignments: moneyTextAlignments,
           cellAlignments: moneyCellAlignments,
           maxWidths: moneyMaxWidths,
@@ -550,19 +481,11 @@ class AnnualReportPdf {
     // Previous year balance.
     varganiRows.add(
       await makeRow(
-        [
-          '',
-          'मागील वर्ष शिल्लक',
-          _money(previousBalance),
-        ],
+        ['', 'मागील वर्ष शिल्लक', _money(previousBalance)],
         textAlignments: moneyTextAlignments,
         cellAlignments: moneyCellAlignments,
         maxWidths: moneyMaxWidths,
-        columnFontSizes: const [
-          10.8,
-          11.2,
-          10.8,
-        ],
+        columnFontSizes: const [10.8, 11.2, 10.8],
         bold: true,
         backgroundColor: _totalColor,
       ),
@@ -602,12 +525,7 @@ class AnnualReportPdf {
       pw.Alignment.center,
     ];
 
-    const expenseMaxWidths = [
-      22.0,
-      155.0,
-      200.0,
-      65.0,
-    ];
+    const expenseMaxWidths = [22.0, 155.0, 200.0, 65.0];
 
     final kharchRows = <pw.TableRow>[
       await makeRow(
@@ -664,12 +582,7 @@ class AnnualReportPdf {
 
     final mahaprasadRows = <pw.TableRow>[
       await makeRow(
-        const [
-          'आ न',
-          'साहित्य',
-          'वस्तू खरेदीदाराचे नावे',
-          'खर्च',
-        ],
+        const ['आ न', 'साहित्य', 'वस्तू खरेदीदाराचे नावे', 'खर्च'],
         textAlignments: expenseAlignments,
         cellAlignments: expenseCellAlignments,
         maxWidths: expenseMaxWidths,
@@ -680,9 +593,7 @@ class AnnualReportPdf {
 
     var mahaprasadTotal = 0.0;
 
-    for (var index = 0;
-    index < mahaprasadKharch.length;
-    index++) {
+    for (var index = 0; index < mahaprasadKharch.length; index++) {
       final item = mahaprasadKharch[index];
 
       final amount = _number(item['amount']);
@@ -768,9 +679,20 @@ class AnnualReportPdf {
     // PRINT / PREVIEW
     // ==========================================================
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-    );
+    if (previewNavigator == null) {
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdf.save(),
+      );
+    } else if (previewNavigator.mounted) {
+      await previewNavigator.push<void>(
+        MaterialPageRoute<void>(
+          builder: (context) => Scaffold(
+            appBar: AppBar(title: Text('वार्षिक अहवाल ($year)')),
+            body: PdfPreview(build: (format) => pdf.save()),
+          ),
+        ),
+      );
+    }
   }
 
   // ==========================================================
@@ -778,21 +700,19 @@ class AnnualReportPdf {
   // ==========================================================
 
   static Future<pw.TableRow> _makeTotalRow(
-      Future<_RenderedText> Function(
-          String, {
-          double fontSize,
-          bool bold,
-          TextAlign textAlign,
-          double maxWidth,
-          ui.Color color,
-          }) getTextImage, {
-        required double total,
-        required List<double> maxWidths,
-      }) async {
-    final blank = await getTextImage(
-      '',
-      maxWidth: maxWidths[0],
-    );
+    Future<_RenderedText> Function(
+      String, {
+      double fontSize,
+      bool bold,
+      TextAlign textAlign,
+      double maxWidth,
+      ui.Color color,
+    })
+    getTextImage, {
+    required double total,
+    required List<double> maxWidths,
+  }) async {
+    final blank = await getTextImage('', maxWidth: maxWidths[0]);
 
     final label = await getTextImage(
       'Total',
@@ -812,22 +732,11 @@ class AnnualReportPdf {
 
     return pw.TableRow(
       verticalAlignment: pw.TableCellVerticalAlignment.middle,
-      decoration: const pw.BoxDecoration(
-        color: _totalColor,
-      ),
+      decoration: const pw.BoxDecoration(color: _totalColor),
       children: [
-        _imageCell(
-          blank,
-          alignment: pw.Alignment.center,
-        ),
-        _imageCell(
-          label,
-          alignment: pw.Alignment.center,
-        ),
-        _imageCell(
-          amount,
-          alignment: pw.Alignment.center,
-        ),
+        _imageCell(blank, alignment: pw.Alignment.center),
+        _imageCell(label, alignment: pw.Alignment.center),
+        _imageCell(amount, alignment: pw.Alignment.center),
       ],
     );
   }
@@ -837,17 +746,18 @@ class AnnualReportPdf {
   // ==========================================================
 
   static Future<pw.TableRow> _makeExpenseTotalRow(
-      Future<_RenderedText> Function(
-          String, {
-          double fontSize,
-          bool bold,
-          TextAlign textAlign,
-          double maxWidth,
-          ui.Color color,
-          }) getTextImage, {
-        required double total,
-        required List<double> maxWidths,
-      }) async {
+    Future<_RenderedText> Function(
+      String, {
+      double fontSize,
+      bool bold,
+      TextAlign textAlign,
+      double maxWidth,
+      ui.Color color,
+    })
+    getTextImage, {
+    required double total,
+    required List<double> maxWidths,
+  }) async {
     final cells = <pw.Widget>[];
 
     for (var index = 0; index < 4; index++) {
@@ -860,12 +770,7 @@ class AnnualReportPdf {
           maxWidth: maxWidths[index],
         );
 
-        cells.add(
-          _imageCell(
-            label,
-            alignment: pw.Alignment.center,
-          ),
-        );
+        cells.add(_imageCell(label, alignment: pw.Alignment.center));
       } else if (index == 3) {
         final amount = await getTextImage(
           _money(total),
@@ -875,32 +780,17 @@ class AnnualReportPdf {
           maxWidth: maxWidths[index],
         );
 
-        cells.add(
-          _imageCell(
-            amount,
-            alignment: pw.Alignment.center,
-          ),
-        );
+        cells.add(_imageCell(amount, alignment: pw.Alignment.center));
       } else {
-        final blank = await getTextImage(
-          '',
-          maxWidth: maxWidths[index],
-        );
+        final blank = await getTextImage('', maxWidth: maxWidths[index]);
 
-        cells.add(
-          _imageCell(
-            blank,
-            alignment: pw.Alignment.center,
-          ),
-        );
+        cells.add(_imageCell(blank, alignment: pw.Alignment.center));
       }
     }
 
     return pw.TableRow(
       verticalAlignment: pw.TableCellVerticalAlignment.middle,
-      decoration: const pw.BoxDecoration(
-        color: _totalColor,
-      ),
+      decoration: const pw.BoxDecoration(color: _totalColor),
       children: cells,
     );
   }
@@ -910,13 +800,13 @@ class AnnualReportPdf {
   // ==========================================================
 
   static Future<_RenderedText> _renderText(
-      String text, {
-        double fontSize = 10.8,
-        bool bold = false,
-        TextAlign textAlign = TextAlign.left,
-        double maxWidth = 900,
-        ui.Color color = const ui.Color(0xFF172B30),
-      }) async {
+    String text, {
+    double fontSize = 10.8,
+    bool bold = false,
+    TextAlign textAlign = TextAlign.left,
+    double maxWidth = 900,
+    ui.Color color = const ui.Color(0xFF172B30),
+  }) async {
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
 
@@ -926,8 +816,7 @@ class AnnualReportPdf {
         style: TextStyle(
           fontFamily: _fontFamily,
           fontSize: fontSize,
-          fontWeight:
-          bold ? FontWeight.bold : FontWeight.normal,
+          fontWeight: bold ? FontWeight.bold : FontWeight.normal,
           height: 1.20,
           color: color,
         ),
@@ -936,57 +825,34 @@ class AnnualReportPdf {
       textDirection: TextDirection.ltr,
     );
 
-    textPainter.layout(
-      minWidth: 0,
-      maxWidth: maxWidth,
-    );
+    textPainter.layout(minWidth: 0, maxWidth: maxWidth);
 
-    final logicalWidth =
-        textPainter.width.ceil() + 8;
+    final logicalWidth = textPainter.width.ceil() + 8;
 
-    final logicalHeight =
-        textPainter.height.ceil() + 8;
+    final logicalHeight = textPainter.height.ceil() + 8;
 
-    final pixelWidth =
-    (logicalWidth * _renderScale).ceil();
+    final pixelWidth = (logicalWidth * _renderScale).ceil();
 
-    final pixelHeight =
-    (logicalHeight * _renderScale).ceil();
+    final pixelHeight = (logicalHeight * _renderScale).ceil();
 
     // Render at 3x resolution.
-    canvas.scale(
-      _renderScale,
-      _renderScale,
-    );
+    canvas.scale(_renderScale, _renderScale);
 
-    canvas.drawColor(
-      const ui.Color(0x00000000),
-      ui.BlendMode.srcOver,
-    );
+    canvas.drawColor(const ui.Color(0x00000000), ui.BlendMode.srcOver);
 
-    textPainter.paint(
-      canvas,
-      const ui.Offset(4, 4),
-    );
+    textPainter.paint(canvas, const ui.Offset(4, 4));
 
     final picture = recorder.endRecording();
 
-    final image = await picture.toImage(
-      pixelWidth,
-      pixelHeight,
-    );
+    final image = await picture.toImage(pixelWidth, pixelHeight);
 
-    final byteData = await image.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
 
     image.dispose();
     picture.dispose();
 
     if (byteData == null) {
-      throw Exception(
-        'Marathi text image could not be generated.',
-      );
+      throw Exception('Marathi text image could not be generated.');
     }
 
     return _RenderedText(
@@ -1000,15 +866,11 @@ class AnnualReportPdf {
   // PDF IMAGE
   // ==========================================================
 
-  static pw.Widget _image(
-      _RenderedText rendered, {
-        double? width,
-      }) {
+  static pw.Widget _image(_RenderedText rendered, {double? width}) {
     return pw.Center(
       child: pw.ConstrainedBox(
         constraints: pw.BoxConstraints(
-          maxWidth:
-          width ?? rendered.logicalWidth,
+          maxWidth: width ?? rendered.logicalWidth,
         ),
         child: pw.Image(
           pw.MemoryImage(rendered.bytes),
@@ -1025,10 +887,9 @@ class AnnualReportPdf {
   // ==========================================================
 
   static pw.Widget _imageCell(
-      _RenderedText rendered, {
-        pw.Alignment alignment =
-            pw.Alignment.center,
-      }) {
+    _RenderedText rendered, {
+    pw.Alignment alignment = pw.Alignment.center,
+  }) {
     return pw.Container(
       width: double.infinity,
 
@@ -1036,10 +897,7 @@ class AnnualReportPdf {
 
       // Reduced vertical padding so more rows
       // fit on each A4 page.
-      padding: const pw.EdgeInsets.symmetric(
-        horizontal: 5,
-        vertical: 3.8,
-      ),
+      padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 3.8),
 
       child: pw.Image(
         pw.MemoryImage(rendered.bytes),
@@ -1063,10 +921,7 @@ class AnnualReportPdf {
       return value.toDouble();
     }
 
-    return double.tryParse(
-      value.toString(),
-    ) ??
-        0;
+    return double.tryParse(value.toString()) ?? 0;
   }
 
   // ==========================================================
@@ -1083,47 +938,28 @@ class AnnualReportPdf {
     final text = value.toString();
 
     if (text.length <= 3) {
-      return number < 0
-          ? '-$text'
-          : text;
+      return number < 0 ? '-$text' : text;
     }
 
-    final lastThree =
-    text.substring(text.length - 3);
+    final lastThree = text.substring(text.length - 3);
 
-    var remaining =
-    text.substring(0, text.length - 3);
+    var remaining = text.substring(0, text.length - 3);
 
     final parts = <String>[];
 
     while (remaining.length > 2) {
-      parts.insert(
-        0,
-        remaining.substring(
-          remaining.length - 2,
-        ),
-      );
+      parts.insert(0, remaining.substring(remaining.length - 2));
 
-      remaining =
-          remaining.substring(
-            0,
-            remaining.length - 2,
-          );
+      remaining = remaining.substring(0, remaining.length - 2);
     }
 
     if (remaining.isNotEmpty) {
-      parts.insert(
-        0,
-        remaining,
-      );
+      parts.insert(0, remaining);
     }
 
-    final result =
-        '${parts.join(',')},$lastThree';
+    final result = '${parts.join(',')},$lastThree';
 
-    return number < 0
-        ? '-$result'
-        : result;
+    return number < 0 ? '-$result' : result;
   }
 }
 

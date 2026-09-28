@@ -53,12 +53,12 @@ class _DatabaseBackupRestoreScreenState
             children: [
               ListTile(
                 leading: const Icon(Icons.save_alt),
-                title: const Text('Save backup'),
+                title: const Text('बॅकअप जतन करा'),
                 onTap: () => Navigator.pop(sheetContext, _ExportAction.save),
               ),
               ListTile(
                 leading: const Icon(Icons.share),
-                title: const Text('Share backup'),
+                title: const Text('बॅकअप शेअर करा'),
                 onTap: () => Navigator.pop(sheetContext, _ExportAction.share),
               ),
               const SizedBox(height: 8),
@@ -146,16 +146,16 @@ class _DatabaseBackupRestoreScreenState
         context: context,
         builder: (dialogContext) => AlertDialog(
           content: const Text(
-            'तुमचा सध्याचा डेटा replace होईल. तुम्हाला हा backup restore करायचा आहे का?',
+            'तुमचा सध्याचा डेटा बदलला जाईल. हा बॅकअप पुनर्स्थापित करायचा आहे का?',
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: const Text('रद्द करा'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Restore'),
+              child: const Text('पुनर्स्थापित करा'),
             ),
           ],
         ),
@@ -163,7 +163,9 @@ class _DatabaseBackupRestoreScreenState
       if (confirmed != true || !mounted) return;
 
       setState(() => _busyMessage = 'Database restore करत आहे...');
-      final safetyBackup = await _databaseHelper.restoreDatabaseFromFile(backup);
+      final safetyBackup = await _databaseHelper.restoreDatabaseFromFile(
+        backup,
+      );
       if (mounted) {
         setState(() => _lastBackupName = path.basename(safetyBackup.path));
         _showMessage('Database restore successful.');
@@ -178,7 +180,7 @@ class _DatabaseBackupRestoreScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Database Backup & Restore')),
+      appBar: AppBar(title: const Text('बॅकअप आणि पुनर्स्थापना')),
       body: Stack(
         children: [
           ListView(
@@ -186,21 +188,22 @@ class _DatabaseBackupRestoreScreenState
             children: [
               _actionButton(
                 icon: Icons.save_alt,
-                title: 'Export Database',
-                subtitle: 'संपूर्ण डेटाबेसचा बॅकअप तयार करा',
+                title: 'बॅकअप तयार करा',
+                subtitle: 'संपूर्ण डेटाबेसची सुरक्षित प्रत तयार करा',
                 onPressed: _isBusy ? null : _exportDatabase,
               ),
               const SizedBox(height: 16),
               _actionButton(
                 icon: Icons.settings_backup_restore,
-                title: 'Import / Restore Database',
-                subtitle: 'बॅकअपमधून डेटाबेस restore करा',
+                title: 'बॅकअप पुनर्स्थापित करा',
+                subtitle: 'निवडलेल्या प्रतिमधून डेटा परत आणा',
                 onPressed: _isBusy ? null : _importDatabase,
               ),
               const SizedBox(height: 24),
               Text(
-                'Last Backup: ${_lastBackupName ?? 'अद्याप उपलब्ध नाही'}',
-                style: Theme.of(context).textTheme.bodyMedium,
+                'शेवटचा बॅकअप: ${_lastBackupName ?? 'अद्याप उपलब्ध नाही'}',
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: const Color(0xFF756A5D)),
               ),
             ],
           ),
@@ -242,23 +245,57 @@ class _DatabaseBackupRestoreScreenState
     required String subtitle,
     required VoidCallback? onPressed,
   }) {
-    return SizedBox(
-      width: double.infinity,
-      child: FilledButton.tonalIcon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 28),
-        label: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Card(
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(subtitle),
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF0E1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(icon, size: 27, color: const Color(0xFFB94D00)),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0xFF756A5D),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                onPressed == null
+                    ? Icons.lock_outline
+                    : Icons.arrow_forward_ios,
+                size: 17,
+                color: const Color(0xFF9D6A3F),
+              ),
             ],
           ),
         ),
-        style: FilledButton.styleFrom(alignment: Alignment.centerLeft),
       ),
     );
   }

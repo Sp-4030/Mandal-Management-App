@@ -66,6 +66,50 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     return '₹${amount.toStringAsFixed(2)}';
   }
 
+  Widget _summaryTotal(String title, double amount) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF0E1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFF0D2B5)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF8E410C),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 5),
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: amount),
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, child) => Text(
+                money(value),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF25231F),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ============================================================
   // PRASAD DENGANI DIALOG
   // ============================================================
@@ -393,16 +437,27 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   // ============================================================
 
   Widget sectionTitle(String title) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.indigo.shade50,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        title,
-        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+    final icon = switch (title) {
+      'प्रसाद देणगी' => Icons.volunteer_activism_outlined,
+      'प्रसाद साहित्य' => Icons.inventory_2_outlined,
+      _ => Icons.temple_hindu_outlined,
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 14, 4, 9),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFFB94D00), size: 23),
+          const SizedBox(width: 10),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF35291F),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -429,32 +484,56 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
       },
       child: Column(
         children: [
-          ListTile(
-            leading: SizedBox(width: 24, child: Text('${index + 1}')),
-            title: Text(name),
-            subtitle: Text(detail),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: 'बदला',
-                  icon: const Icon(Icons.edit, size: 20),
-                  onPressed: onEdit,
-                ),
-                IconButton(
-                  tooltip: 'हटवा',
-                  icon: const Icon(Icons.delete, size: 20, color: Colors.red),
-                  onPressed: () async {
-                    if (!await confirmDelete()) return;
-                    if (!mounted) return;
-                    await deleteRecordAndRefresh(
-                      context,
-                      delete: onDelete,
-                      refresh: loadData,
-                    );
-                  },
-                ),
-              ],
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.94, end: 1),
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            builder: (context, value, child) => Opacity(
+              opacity: value,
+              child: Transform.translate(
+                offset: Offset(0, 7 * (1 - value)),
+                child: child,
+              ),
+            ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: const Color(0xFFFFF0E1),
+                foregroundColor: const Color(0xFFB94D00),
+                child: Text('${index + 1}'),
+              ),
+              title: Text(
+                name,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                detail,
+                style: const TextStyle(color: Color(0xFF756A5D)),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'बदला',
+                    icon: const Icon(Icons.edit, size: 20),
+                    onPressed: onEdit,
+                  ),
+                  IconButton(
+                    tooltip: 'हटवा',
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () async {
+                      if (!await confirmDelete()) return;
+                      if (!mounted) return;
+                      await deleteRecordAndRefresh(
+                        context,
+                        delete: onDelete,
+                        refresh: loadData,
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
           const Divider(height: 1),
@@ -494,7 +573,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
         Align(
           alignment: Alignment.centerRight,
           child: Text(
-            'Total: ${money(prasadDenganiTotal)}',
+            'एकूण: ${money(prasadDenganiTotal)}',
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
           ),
         ),
@@ -571,7 +650,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
         Align(
           alignment: Alignment.centerRight,
           child: Text(
-            'Total: ${money(aartiVarganiTotal)}',
+            'एकूण: ${money(aartiVarganiTotal)}',
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
           ),
         ),
@@ -586,16 +665,15 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   Widget sectionCard({required Widget child, required VoidCallback onAdd}) {
     return Card(
       margin: const EdgeInsets.only(bottom: 20),
-      elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           children: [
             child,
             const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
+              child: FilledButton.icon(
                 onPressed: onAdd,
                 icon: const Icon(Icons.add),
                 label: const Text('नवीन नोंद'),
@@ -616,6 +694,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('प्रसाद देणगी'),
+        centerTitle: false,
         actions: [
           IconButton(onPressed: loadData, icon: const Icon(Icons.refresh)),
         ],
@@ -667,6 +746,14 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                           ],
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        _summaryTotal('प्रसाद देणगी', prasadDenganiTotal),
+                        const SizedBox(width: 10),
+                        _summaryTotal('आरतीतील वर्गणी', aartiVarganiTotal),
+                      ],
                     ),
 
                     // ------------------------------------------------
