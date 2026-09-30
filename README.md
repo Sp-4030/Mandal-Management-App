@@ -1,18 +1,48 @@
-# hindvi_app
+# Hindvi Swarajya Mandal Management
 
-A new Flutter project.
+A Flutter app for recording and managing mandal collections, donations, and expenses. The interface and annual reports support Marathi/Devanagari text.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- Track annual vargani (membership contributions) and previous balances.
+- Record prasad donations, prasad supplies, and aarti contributions.
+- Track regular and mahaprasad market expenses.
+- Generate, preview, and print annual PDF reports.
+- Back up and restore the local database, review recovery data, and transfer records between phones using QR-based workflows.
+- Scan QR codes for data transfer.
 
-A few resources to get you started if this is your first Flutter project:
+## Requirements
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- Flutter SDK with Dart 3.13.4 or later, as allowed by `pubspec.yaml`.
+- Android Studio or another configured Flutter target for running the app.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-"# Mandal-Management-App" 
+## Run Locally
+
+```sh
+flutter pub get
+flutter run
+```
+
+To run the test suite:
+
+```sh
+flutter test
+```
+
+To build an Android APK:
+
+```sh
+flutter build apk
+```
+
+## Data and Backups
+
+The app uses SQLite for local data storage. On Android, the active database is stored at `/storage/emulated/0/हिंदवी/hindvi_latest.db`; older or recovery database files are kept in the `Old` subfolder. Use **Settings** to create a backup, restore a backup, manage recovery data, or transfer mandal data to another phone. Keep a separate backup before restoring or moving data.
+
+## Project Layout
+
+- `lib/screens/`: collection, expense, settings, backup, restore, and transfer screens.
+- `lib/database/`: SQLite database access and data models.
+- `lib/pdf/`: annual report PDF generation.
+- `assets/fonts/` and `assets/images/`: Devanagari font and app logo.
+- `test/`: Flutter tests.
