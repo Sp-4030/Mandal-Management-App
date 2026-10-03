@@ -1186,8 +1186,30 @@ class DatabaseHelper {
       'vargani',
       where: 'year = ?',
       whereArgs: [year],
-      orderBy: 'id ASC',
+      orderBy: 'amount DESC, id ASC',
     );
+  }
+
+  /// Checks if another record with the same normalized name already exists in the given year.
+  /// If [excludeId] is provided, that record is ignored (useful when editing an existing entry).
+  Future<bool> hasVarganiWithSameName(
+    int year,
+    String name, {
+    int? excludeId,
+  }) async {
+    final list = await getVargani(year);
+    final normalized = name.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+    for (final row in list) {
+      if (excludeId != null && row['id'] == excludeId) continue;
+      final existingNormalized = (row['name']?.toString() ?? '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim()
+          .toLowerCase();
+      if (existingNormalized == normalized) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<int> updateVargani(

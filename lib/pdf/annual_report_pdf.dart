@@ -438,14 +438,25 @@ class AnnualReportPdf {
       ),
     ];
 
+    final sortedVargani = List<Map<String, dynamic>>.from(vargani);
+    sortedVargani.sort((a, b) {
+      final aAmount = _number(a['amount']);
+      final bAmount = _number(b['amount']);
+      final cmp = bAmount.compareTo(aAmount);
+      if (cmp != 0) return cmp;
+      final aId = (a['id'] as num?)?.toInt() ?? 0;
+      final bId = (b['id'] as num?)?.toInt() ?? 0;
+      return aId.compareTo(bId);
+    });
+
     var varganiTotal = 0.0;
 
     for (
     var index = 0;
-    index < vargani.length;
+    index < sortedVargani.length;
     index++
     ) {
-      final item = vargani[index];
+      final item = sortedVargani[index];
 
       final amount =
       _number(item['amount']);

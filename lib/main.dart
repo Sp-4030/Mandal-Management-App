@@ -7,6 +7,8 @@ import 'screens/mahaprasad_kharch_screen.dart';
 import 'screens/settings_screen.dart';
 import 'database/database_helper.dart';
 import 'pdf/annual_report_pdf.dart';
+import 'screens/app_update_screen.dart';
+import 'services/update_service.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
 const Color _deepSaffron = Color(0xFFB94D00);
@@ -98,7 +100,12 @@ void main() {
 }
 
 class HindviApp extends StatelessWidget {
-  const HindviApp({super.key});
+  final bool checkUpdateOnStartup;
+
+  const HindviApp({
+    super.key,
+    this.checkUpdateOnStartup = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -106,13 +113,18 @@ class HindviApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'हिंदवी स्वराज्य',
       theme: _hindviTheme,
-      home: const DashboardScreen(),
+      home: DashboardScreen(checkUpdateOnStartup: checkUpdateOnStartup),
     );
   }
 }
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final bool checkUpdateOnStartup;
+
+  const DashboardScreen({
+    super.key,
+    this.checkUpdateOnStartup = true,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -125,6 +137,33 @@ class _DashboardScreenState extends State<DashboardScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
+    if (widget.checkUpdateOnStartup) {
+      _checkStartupUpdate();
+    }
+  }
+
+  Future<void> _checkStartupUpdate() async {
+    try {
+      final updateService = UpdateService();
+      final result = await updateService.checkForUpdate();
+      if (!mounted) return;
+
+      if (result.status == UpdateCheckStatus.updateAvailable &&
+          result.updateInfo != null) {
+        // Mandatory blocking update screen
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) => AppUpdateScreen(
+              isMandatory: true,
+              initialCheckResult: result,
+            ),
+          ),
+          (route) => false,
+        );
+      }
+    } catch (_) {
+      // Offline-first: if internet unavailable or check fails, do NOT block
+    }
   }
 
   @override

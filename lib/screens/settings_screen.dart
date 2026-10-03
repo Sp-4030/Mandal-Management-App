@@ -9,6 +9,7 @@ import '../database/database_helper.dart';
 import 'mandal_data_transfer_screen.dart';
 import 'recovery_data_screen.dart';
 import 'restore_screen.dart';
+import 'app_update_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -172,6 +173,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 context,
                 MaterialPageRoute(
                   builder: (context) => const RecoveryDataScreen(),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // 5. App Update
+          _settingsOptionTile(
+            context: context,
+            icon: Icons.system_update_rounded,
+            title: 'App Update',
+            description:
+                'नवीन अपडेट तपासा आणि थेट अॅपमधून सुरक्षितपणे अपडेट करा.',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AppUpdateScreen(),
                 ),
               );
             },

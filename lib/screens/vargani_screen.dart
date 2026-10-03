@@ -18,18 +18,15 @@ class _VarganiScreenState extends State<VarganiScreen> {
   final DatabaseHelper db = DatabaseHelper.instance;
 
   final TextEditingController nameController = TextEditingController();
-
   final TextEditingController amountController = TextEditingController();
-
   final TextEditingController previousBalanceController =
       TextEditingController();
+  final TextEditingController searchController = TextEditingController();
 
   List<Map<String, dynamic>> varganiList = [];
-
+  String searchQuery = '';
   double totalAmount = 0.0;
-
   double previousBalance = 0.0;
-
   int selectedYear = DateTime.now().year;
 
   @override
@@ -39,27 +36,64 @@ class _VarganiScreenState extends State<VarganiScreen> {
   }
 
   // ============================================================
-  // LOAD DATA
+  // TEXT NORMALIZATION
+  // ============================================================
+
+  /// Normalizes whitespace: collapses multiple spaces/tabs into a single space
+  /// and trims leading/trailing spaces without touching Marathi characters.
+  String _normalizeText(String input) {
+    return input.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  // ============================================================
+  // LOAD DATA & SORTING
   // ============================================================
 
   Future<void> loadData() async {
     final data = await db.getVargani(selectedYear);
-
     final total = await db.getVarganiTotal(selectedYear);
-
     final previous = await db.getPreviousBalance(selectedYear);
+
+    // Explicit numeric sorting: HIGH AMOUNT -> LOW AMOUNT.
+    // When amounts are identical, preserve existing order by ID.
+    final sorted = List<Map<String, dynamic>>.from(data);
+    sorted.sort((a, b) {
+      final aAmount = (a['amount'] as num?)?.toDouble() ?? 0.0;
+      final bAmount = (b['amount'] as num?)?.toDouble() ?? 0.0;
+      final cmp = bAmount.compareTo(aAmount);
+      if (cmp != 0) return cmp;
+      final aId = (a['id'] as num?)?.toInt() ?? 0;
+      final bId = (b['id'] as num?)?.toInt() ?? 0;
+      return aId.compareTo(bId);
+    });
 
     if (!mounted) return;
 
     setState(() {
-      varganiList = data;
+      varganiList = sorted;
       totalAmount = total;
       previousBalance = previous;
-
-      previousBalanceController.text = previous == 0
-          ? ''
-          : previous.toStringAsFixed(0);
+      previousBalanceController.text =
+          previous == 0 ? '' : previous.toStringAsFixed(0);
     });
+  }
+
+  // ============================================================
+  // SEARCH FILTERING
+  // ============================================================
+
+  /// Returns filtered list matching partial name search,
+  /// preserving the descending numeric amount order.
+  List<Map<String, dynamic>> get filteredVarganiList {
+    final query = _normalizeText(searchQuery).toLowerCase();
+    if (query.isEmpty) {
+      return varganiList;
+    }
+    return varganiList.where((item) {
+      final name =
+          _normalizeText(item['name']?.toString() ?? '').toLowerCase();
+      return name.contains(query);
+    }).toList();
   }
 
   // ============================================================
@@ -93,24 +127,82 @@ class _VarganiScreenState extends State<VarganiScreen> {
   }
 
   // ============================================================
+  // SAME NAME CONFIRMATION DIALOG
+  // ============================================================
+
+  Future<bool> _showSameNameConfirmationDialog(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Text('समान नाव आढळले'),
+          content: const Text(
+            'या नावाची व्यक्ती आधीपासून या वर्षाच्या वर्गणीमध्ये नोंदवलेली आहे.\n\n'
+            'ही वेगळी व्यक्ती असल्यास "होय, वेगळी व्यक्ती" निवडा.',
+            style: TextStyle(height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('रद्द करा'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _deepSaffron,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('होय, वेगळी व्यक्ती'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  // ============================================================
   // ADD VARGANI
   // ============================================================
 
-  Future<void> addVargani() async {
-    final name = nameController.text.trim();
-
+  Future<void> addVargani(BuildContext dialogContext) async {
+    final name = _normalizeText(nameController.text);
     final amountText = amountController.text.trim();
 
-    if (name.isEmpty || amountText.isEmpty) {
-      showMessage('कृपया नाव आणि रक्कम भरा');
+    // Input Validation: Name
+    if (name.isEmpty) {
+      showMessage('नाव आवश्यक आहे.');
+      return;
+    }
+
+    // Input Validation: Amount
+    if (amountText.isEmpty) {
+      showMessage('रक्कम आवश्यक आहे.');
       return;
     }
 
     final amount = double.tryParse(amountText);
-
-    if (amount == null || amount <= 0) {
-      showMessage('कृपया योग्य रक्कम टाका');
+    if (amount == null) {
+      showMessage('कृपया योग्य रक्कम टाका.');
       return;
+    }
+
+    if (amount <= 0) {
+      showMessage('रक्कम 0 पेक्षा जास्त असावी.');
+      return;
+    }
+
+    // Same-name check in currently selected year
+    final hasSameName = await db.hasVarganiWithSameName(selectedYear, name);
+    if (hasSameName) {
+      if (!dialogContext.mounted) return;
+      final confirmed =
+          await _showSameNameConfirmationDialog(dialogContext);
+      if (!confirmed) {
+        // User cancelled -> Keep Add dialog open
+        return;
+      }
     }
 
     await db.insertVargani({
@@ -122,9 +214,8 @@ class _VarganiScreenState extends State<VarganiScreen> {
     nameController.clear();
     amountController.clear();
 
-    if (!mounted) return;
-
-    Navigator.pop(context);
+    if (!dialogContext.mounted) return;
+    Navigator.pop(dialogContext);
 
     await loadData();
   }
@@ -156,12 +247,12 @@ class _VarganiScreenState extends State<VarganiScreen> {
 
   Future<void> editVargani(Map<String, dynamic> item) async {
     nameController.text = item['name'].toString();
-
     amountController.text = item['amount'].toString();
+    final int itemId = item['id'];
 
     await showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           title: const Text('वर्गणी बदला'),
           content: Column(
@@ -174,9 +265,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
                   border: OutlineInputBorder(),
                 ),
               ),
-
               const SizedBox(height: 15),
-
               TextField(
                 controller: amountController,
                 keyboardType: const TextInputType.numberWithOptions(
@@ -192,21 +281,56 @@ class _VarganiScreenState extends State<VarganiScreen> {
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.pop(dialogContext);
               },
               child: const Text('रद्द'),
             ),
             ElevatedButton(
               onPressed: () async {
-                final name = nameController.text.trim();
+                final name = _normalizeText(nameController.text);
+                final amountText = amountController.text.trim();
 
-                final amount = double.tryParse(amountController.text.trim());
-
-                if (name.isEmpty || amount == null || amount <= 0) {
+                // Input Validation: Name
+                if (name.isEmpty) {
+                  showMessage('नाव आवश्यक आहे.');
                   return;
                 }
 
-                await db.updateVargani(item['id'], {
+                // Input Validation: Amount
+                if (amountText.isEmpty) {
+                  showMessage('रक्कम आवश्यक आहे.');
+                  return;
+                }
+
+                final amount = double.tryParse(amountText);
+                if (amount == null) {
+                  showMessage('कृपया योग्य रक्कम टाका.');
+                  return;
+                }
+
+                if (amount <= 0) {
+                  showMessage('रक्कम 0 पेक्षा जास्त असावी.');
+                  return;
+                }
+
+                // Same-name check: exclude current record ID
+                final hasSameName = await db.hasVarganiWithSameName(
+                  selectedYear,
+                  name,
+                  excludeId: itemId,
+                );
+
+                if (hasSameName) {
+                  if (!dialogContext.mounted) return;
+                  final confirmed =
+                      await _showSameNameConfirmationDialog(dialogContext);
+                  if (!confirmed) {
+                    // User cancelled -> Keep Edit dialog open
+                    return;
+                  }
+                }
+
+                await db.updateVargani(itemId, {
                   'name': name,
                   'amount': amount,
                   'year': selectedYear,
@@ -215,11 +339,8 @@ class _VarganiScreenState extends State<VarganiScreen> {
                 nameController.clear();
                 amountController.clear();
 
-                if (!context.mounted) {
-                  return;
-                }
-
-                Navigator.pop(context);
+                if (!dialogContext.mounted) return;
+                Navigator.pop(dialogContext);
 
                 await loadData();
               },
@@ -241,7 +362,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           title: const Text('वर्गणी जमा करा'),
           content: Column(
@@ -254,9 +375,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
                   border: OutlineInputBorder(),
                 ),
               ),
-
               const SizedBox(height: 15),
-
               TextField(
                 controller: amountController,
                 keyboardType: const TextInputType.numberWithOptions(
@@ -272,11 +391,14 @@ class _VarganiScreenState extends State<VarganiScreen> {
           actions: [
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.pop(dialogContext);
               },
               child: const Text('रद्द'),
             ),
-            ElevatedButton(onPressed: addVargani, child: const Text('जमा करा')),
+            ElevatedButton(
+              onPressed: () => addVargani(dialogContext),
+              child: const Text('जमा करा'),
+            ),
           ],
         );
       },
@@ -301,6 +423,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
     nameController.dispose();
     amountController.dispose();
     previousBalanceController.dispose();
+    searchController.dispose();
 
     super.dispose();
   }
@@ -311,6 +434,8 @@ class _VarganiScreenState extends State<VarganiScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final displayedList = filteredVarganiList;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('वर्गणी'),
@@ -333,6 +458,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 92),
           children: [
+            // 1. Year Dropdown Card
             Card(
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -361,7 +487,11 @@ class _VarganiScreenState extends State<VarganiScreen> {
                       }),
                       onChanged: (value) async {
                         if (value == null) return;
-                        setState(() => selectedYear = value);
+                        setState(() {
+                          selectedYear = value;
+                          searchQuery = '';
+                          searchController.clear();
+                        });
                         await loadData();
                       },
                     ),
@@ -370,6 +500,43 @@ class _VarganiScreenState extends State<VarganiScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // 2. Search Field Card (Placeholder: नाव शोधा)
+            Card(
+              child: TextField(
+                controller: searchController,
+                onChanged: (value) {
+                  setState(() {
+                    searchQuery = value;
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: 'नाव शोधा',
+                  prefixIcon: const Icon(Icons.search, color: _deepSaffron),
+                  suffixIcon: searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.grey),
+                          onPressed: () {
+                            searchController.clear();
+                            setState(() {
+                              searchQuery = '';
+                            });
+                          },
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // 3. Previous Year Balance Card (मागील वर्ष शिल्लक)
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -389,7 +556,8 @@ class _VarganiScreenState extends State<VarganiScreen> {
                         Expanded(
                           child: TextField(
                             controller: previousBalanceController,
-                            keyboardType: const TextInputType.numberWithOptions(
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
                             decoration: const InputDecoration(
@@ -412,6 +580,8 @@ class _VarganiScreenState extends State<VarganiScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // 4. Total Card (एकूण वर्गणी)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -454,7 +624,56 @@ class _VarganiScreenState extends State<VarganiScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            if (varganiList.isEmpty)
+
+            // 5. Table Header Row (Marathi Headings: आ न | नाव | जमा रक्कम)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF0E1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFD8B3)),
+              ),
+              child: const Row(
+                children: [
+                  SizedBox(
+                    width: 36,
+                    child: Text(
+                      'आ न',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _deepSaffron,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'नाव',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _deepSaffron,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'जमा रक्कम',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: _deepSaffron,
+                      fontSize: 13,
+                    ),
+                  ),
+                  SizedBox(width: 90), // Offset for edit and delete action buttons
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // 6. Vargani Records List
+            if (displayedList.isEmpty)
               Container(
                 padding: const EdgeInsets.symmetric(
                   vertical: 36,
@@ -465,25 +684,32 @@ class _VarganiScreenState extends State<VarganiScreen> {
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: const Color(0xFFF0E6D9)),
                 ),
-                child: const Column(
+                child: Column(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.receipt_long_outlined,
                       size: 34,
                       color: _deepSaffron,
                     ),
-                    SizedBox(height: 10),
+                    const SizedBox(height: 10),
                     Text(
-                      'या वर्षासाठी कोणतीही नोंद उपलब्ध नाही.',
+                      searchQuery.isNotEmpty
+                          ? 'शोधलेल्या नावाची कोणतीही नोंद सापडली नाही.'
+                          : 'या वर्षासाठी कोणतीही नोंद उपलब्ध नाही.',
                       textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF756A5D)),
                     ),
                   ],
                 ),
               )
             else
-              ...List.generate(varganiList.length, (index) {
-                final item = varganiList[index];
+              ...List.generate(displayedList.length, (index) {
+                final item = displayedList[index];
                 final amount = (item['amount'] as num).toDouble();
+                final originalIndex = varganiList.indexOf(item);
+                final serialNumber =
+                    (originalIndex >= 0 ? originalIndex : index) + 1;
+
                 return Dismissible(
                   key: ValueKey('vargani-${item['id']}'),
                   direction: DismissDirection.endToStart,
@@ -506,9 +732,16 @@ class _VarganiScreenState extends State<VarganiScreen> {
                       child: Row(
                         children: [
                           CircleAvatar(
+                            radius: 17,
                             backgroundColor: const Color(0xFFFFF0E1),
                             foregroundColor: _deepSaffron,
-                            child: Text('${index + 1}'),
+                            child: Text(
+                              '$serialNumber',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -526,7 +759,6 @@ class _VarganiScreenState extends State<VarganiScreen> {
                                 const SizedBox(height: 3),
                                 Text(
                                   '₹ ${amount.toStringAsFixed(0)}',
-                                  textAlign: TextAlign.right,
                                   style: const TextStyle(
                                     color: _deepSaffron,
                                     fontWeight: FontWeight.w700,
