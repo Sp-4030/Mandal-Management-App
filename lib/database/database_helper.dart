@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../services/auth_service.dart';
+
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
 
@@ -48,8 +50,7 @@ class DatabaseHelper {
   //     hindvi_latest.db
   // ============================================================
 
-  static const String _databaseFileName =
-      'hindvi_latest.db';
+  static const String _databaseFileName = 'hindvi_latest.db';
 
   // ============================================================
   // REQUIRED TABLES
@@ -76,6 +77,73 @@ class DatabaseHelper {
   ];
 
   // ============================================================
+  // ROLE & PERMISSION CHECK
+  // ============================================================
+
+  bool _isDeviceRevoked = false;
+
+  void setDeviceRevokedState(bool revoked) {
+    _isDeviceRevoked = revoked;
+  }
+
+  void _assertDeviceNotRevoked() {
+    if (_isDeviceRevoked) {
+      throw StateError(
+        'हे डिव्हाइस रद्द (Revoked) केले आहे. आर्थिक डेटा ॲक्सेस किंवा बदल करता येणार नाही.',
+      );
+    }
+  }
+
+  void assertDeviceNotRevokedForTesting() => _assertDeviceNotRevoked();
+
+  void _assertCanModifyData() {
+    _assertDeviceNotRevoked();
+    if (AuthService.instance.isDeveloper) return;
+    if (AuthService.instance.isOldKhajani &&
+        !AuthService.instance.canEdit &&
+        !AuthService.instance.canAdd &&
+        !AuthService.instance.canDelete) {
+      throw StateError(
+        'माजी खजानी (OLD_KHAJANI) यांना बदल किंवा हटवण्याची परवानगी नाही. केवळ वाचन परवानगी आहे.',
+      );
+    }
+  }
+
+  void _assertCanAdd() {
+    if (AuthService.instance.isDeveloper) return;
+    _assertCanModifyData();
+    if (!AuthService.instance.canAdd) {
+      throw StateError('नोंद जोडण्याची परवानगी (Add Permission) नाही.');
+    }
+  }
+
+  void _assertCanEdit() {
+    if (AuthService.instance.isDeveloper) return;
+    _assertCanModifyData();
+    if (!AuthService.instance.canEdit) {
+      throw StateError('बदल करण्याची परवानगी (Edit Permission) नाही.');
+    }
+  }
+
+  void _assertCanDelete() {
+    if (AuthService.instance.isDeveloper) return;
+    _assertCanModifyData();
+    if (!AuthService.instance.canDelete) {
+      throw StateError('हटवण्याची परवानगी (Delete Permission) नाही.');
+    }
+  }
+
+  void _assertCanSync() {
+    if (AuthService.instance.isDeveloper) return;
+    _assertCanModifyData();
+    if (!AuthService.instance.canSync) {
+      throw StateError(
+        'डेटा सिंक / मायग्रेशन करण्याची परवानगी (Sync Permission) नाही.',
+      );
+    }
+  }
+
+  // ============================================================
   // DATABASE GETTER
   // ============================================================
 
@@ -98,15 +166,11 @@ class DatabaseHelper {
     final oldFolder = Directory(_oldFolderPath);
 
     if (!await hindviFolder.exists()) {
-      await hindviFolder.create(
-        recursive: true,
-      );
+      await hindviFolder.create(recursive: true);
     }
 
     if (!await oldFolder.exists()) {
-      await oldFolder.create(
-        recursive: true,
-      );
+      await oldFolder.create(recursive: true);
     }
 
     await _migrateLegacyFolderIfNeeded();
@@ -119,7 +183,15 @@ class DatabaseHelper {
         final legacyCandidates = [
           File('/storage/emulated/0/Hindvi/Backup/Latest/$_databaseFileName'),
           File('/storage/emulated/0/Hindvi/$_databaseFileName'),
-          File(join(Directory.current.path, 'Hindvi', 'Backup', 'Latest', _databaseFileName)),
+          File(
+            join(
+              Directory.current.path,
+              'Hindvi',
+              'Backup',
+              'Latest',
+              _databaseFileName,
+            ),
+          ),
         ];
         for (final candidate in legacyCandidates) {
           if (await candidate.exists()) {
@@ -157,10 +229,7 @@ class DatabaseHelper {
   Future<String> _databaseFilePath() async {
     await _ensureHindviFolders();
 
-    return join(
-      _hindviFolderPath,
-      _databaseFileName,
-    );
+    return join(_hindviFolderPath, _databaseFileName);
   }
 
   // ============================================================
@@ -180,12 +249,11 @@ class DatabaseHelper {
   Future<Database> _initDatabase() async {
     await _ensureHindviFolders();
 
-    final path =
-    await _databaseFilePath();
+    final path = await _databaseFilePath();
 
     final db = await openDatabase(
       path,
-      version: 4,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -197,26 +265,16 @@ class DatabaseHelper {
   // TIMESTAMP
   // ============================================================
 
-  String _timestamp(
-      DateTime date, {
-        bool includeSeconds = false,
-      }) {
-    String twoDigits(int value) =>
-        value.toString().padLeft(2, '0');
+  String _timestamp(DateTime date, {bool includeSeconds = false}) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
 
     final datePart =
-        '${date.year}_'
-        '${twoDigits(date.month)}_'
-        '${twoDigits(date.day)}';
+        '${date.year}_${twoDigits(date.month)}_${twoDigits(date.day)}';
 
     final timePart =
-        '${twoDigits(date.hour)}_'
-        '${twoDigits(date.minute)}'
-        '${includeSeconds ? '_${twoDigits(date.second)}' : ''}';
+        '${twoDigits(date.hour)}_${twoDigits(date.minute)}${includeSeconds ? '_${twoDigits(date.second)}' : ''}';
 
-    return includeSeconds
-        ? '${datePart}_$timePart'
-        : datePart;
+    return includeSeconds ? '${datePart}_$timePart' : datePart;
   }
 
   // ============================================================
@@ -226,9 +284,7 @@ class DatabaseHelper {
   String extensionOf(String name) {
     final dot = name.lastIndexOf('.');
 
-    return dot < 0
-        ? ''
-        : name.substring(dot);
+    return dot < 0 ? '' : name.substring(dot);
   }
 
   // ============================================================
@@ -238,30 +294,16 @@ class DatabaseHelper {
   // ============================================================
 
   Future<File> _uniqueOldBackupFile() async {
-    final oldFolder =
-    Directory(await _oldFolderPathValue());
+    final oldFolder = Directory(await _oldFolderPathValue());
 
-    final timestamp = _timestamp(
-      DateTime.now(),
-      includeSeconds: true,
-    );
+    final timestamp = _timestamp(DateTime.now(), includeSeconds: true);
 
-    var file = File(
-      join(
-        oldFolder.path,
-        'hindvi_old_$timestamp.db',
-      ),
-    );
+    var file = File(join(oldFolder.path, 'hindvi_old_$timestamp.db'));
 
     var counter = 1;
 
     while (await file.exists()) {
-      file = File(
-        join(
-          oldFolder.path,
-          'hindvi_old_${timestamp}_$counter.db',
-        ),
-      );
+      file = File(join(oldFolder.path, 'hindvi_old_${timestamp}_$counter.db'));
 
       counter++;
     }
@@ -283,9 +325,7 @@ class DatabaseHelper {
   // safely written.
   // ============================================================
 
-  Future<void> _createAutomaticBackup(
-      Database db,
-      ) async {
+  Future<void> _createAutomaticBackup(Database db) async {
     if (_backupRestoreInProgress) {
       return;
     }
@@ -300,9 +340,7 @@ class DatabaseHelper {
       await _ensureHindviFolders();
 
       try {
-        await db.execute(
-          'PRAGMA wal_checkpoint(FULL)',
-        );
+        await db.execute('PRAGMA wal_checkpoint(FULL)');
       } catch (_) {
         // Continue if WAL checkpoint is unavailable.
       }
@@ -323,17 +361,14 @@ class DatabaseHelper {
 
   Future<File> createAutomaticBackup() async {
     if (_backupRestoreInProgress) {
-      throw StateError(
-        'A database backup or restore is already running.',
-      );
+      throw StateError('A database backup or restore is already running.');
     }
 
     final db = await database;
 
     await _createAutomaticBackup(db);
 
-    final path =
-    await _databaseFilePath();
+    final path = await _databaseFilePath();
 
     return File(path);
   }
@@ -349,9 +384,7 @@ class DatabaseHelper {
 
   Future<File> createExportBackup() async {
     if (_backupRestoreInProgress) {
-      throw StateError(
-        'A database backup or restore is already running.',
-      );
+      throw StateError('A database backup or restore is already running.');
     }
 
     _backupRestoreInProgress = true;
@@ -369,8 +402,7 @@ class DatabaseHelper {
 
       connectionClosed = true;
 
-      final databaseFile =
-      File(await _databaseFilePath());
+      final databaseFile = File(await _databaseFilePath());
 
       if (!await databaseFile.exists()) {
         throw FileSystemException(
@@ -382,16 +414,11 @@ class DatabaseHelper {
       final exportFile = File(
         join(
           _hindviFolderPath,
-          'hindvi_export_${_timestamp(
-            DateTime.now(),
-            includeSeconds: true,
-          )}.db',
+          'hindvi_export_${_timestamp(DateTime.now(), includeSeconds: true)}.db',
         ),
       );
 
-      await databaseFile.copy(
-        exportFile.path,
-      );
+      await databaseFile.copy(exportFile.path);
 
       return exportFile;
     } finally {
@@ -414,9 +441,7 @@ class DatabaseHelper {
 
   Future<File> createExplicitBackup() async {
     if (_backupRestoreInProgress) {
-      throw StateError(
-        'A database backup or restore is already running.',
-      );
+      throw StateError('A database backup or restore is already running.');
     }
 
     _backupRestoreInProgress = true;
@@ -457,9 +482,13 @@ class DatabaseHelper {
     return await createExplicitBackup();
   }
 
+  // ============================================================
+  // OLD BACKUP FILES
+  // ============================================================
+
   Future<List<File>> getOldBackupFiles() async {
     await _ensureHindviFolders();
-    final oldDir = Directory(_oldFolderPath);
+    final oldDir = Directory(await _oldFolderPathValue());
     if (!await oldDir.exists()) return [];
 
     final list = await oldDir.list().toList();
@@ -479,25 +508,19 @@ class DatabaseHelper {
     return files;
   }
 
-  Future<DateTime?> getLastBackupTime() async {
-    final files = await getOldBackupFiles();
-    if (files.isEmpty) return null;
-    try {
-      return files.first.lastModifiedSync();
-    } catch (_) {
-      return null;
-    }
+  Future<List<File>> listOldBackups() async {
+    return await getOldBackupFiles();
   }
 
   Future<void> deleteOldBackupFile(File file) async {
     await _ensureHindviFolders();
-    final oldDir = Directory(_oldFolderPath);
+    final oldDir = Directory(await _oldFolderPathValue());
     final activePath = await _databaseFilePath();
 
     // STRICT SAFETY CHECK: Never allow deleting the active database
     if (canonicalize(file.path) == canonicalize(activePath) ||
         basename(file.path) == _databaseFileName) {
-      throw StateError('सक्रिय डेटाबेस ($databaseFileName) हटवता येत नाही.');
+      throw StateError('सक्रिय डेटाबेस () हटवता येत नाही.');
     }
 
     final oldCanonical = canonicalize(oldDir.path);
@@ -512,88 +535,84 @@ class DatabaseHelper {
   }
 
   // ============================================================
+  // LAST BACKUP TIME
+  // ============================================================
+
+  Future<DateTime?> getLastBackupTime() async {
+    final files = await getOldBackupFiles();
+    if (files.isEmpty) return null;
+    try {
+      return files.first.lastModifiedSync();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ============================================================
+  // CLEANUP OLD BACKUPS
+  // ============================================================
+
+  Future<void> cleanupOldBackups({int keepCount = 10}) async {
+    final backups = await getOldBackupFiles();
+
+    if (backups.length <= keepCount) {
+      return;
+    }
+
+    final toDelete = backups.sublist(keepCount);
+
+    for (final file in toDelete) {
+      try {
+        await file.delete();
+      } catch (_) {}
+    }
+  }
+
+  // ============================================================
   // VALIDATE BACKUP FILE
   // ============================================================
 
-  Future<void> validateBackupFile(
-      File file,
-      ) async {
-    if (!await file.exists() ||
-        !file.path
-            .toLowerCase()
-            .endsWith('.db')) {
-      throw const FormatException(
-        'Invalid database backup file.',
-      );
+  Future<void> validateBackupFile(File file) async {
+    if (!await file.exists()) {
+      throw const FileSystemException('Backup file does not exist.');
+    }
+
+    if (await file.length() == 0) {
+      throw const FormatException('Backup file is empty.');
     }
 
     Database? backupDatabase;
 
     try {
-      backupDatabase = await openDatabase(
-        file.path,
-        readOnly: true,
-        singleInstance: false,
+      backupDatabase = await openDatabase(file.path, readOnly: true);
+
+      final integrityResult = await backupDatabase.rawQuery(
+        'PRAGMA integrity_check',
       );
 
-      final integrity =
-      await backupDatabase.rawQuery(
-        'PRAGMA quick_check',
+      final integrityStatus =
+          integrityResult.first.values.first.toString().toLowerCase();
+
+      if (integrityStatus != 'ok') {
+        throw const FormatException('Database integrity check failed.');
+      }
+
+      final tablesResult = await backupDatabase.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table'",
       );
 
-      if (integrity.length != 1 ||
-          integrity.first.values.first != 'ok') {
-        throw const FormatException(
-          'Database integrity check failed.',
-        );
-      }
+      final existingTables =
+          tablesResult.map((row) => row['name'].toString()).toSet();
 
-      final tables =
-      await backupDatabase.rawQuery(
-        '''
-        SELECT name
-        FROM sqlite_master
-        WHERE type = 'table'
-        ''',
-      );
-
-      final tableNames = tables
-          .map(
-            (row) =>
-        row['name'] as String,
-      )
-          .toSet();
-
-      if (!_requiredTables
-          .every(tableNames.contains)) {
-        throw const FormatException(
-          'Required database tables are missing.',
-        );
-      }
-
-      final version =
-      await backupDatabase.getVersion();
-
-      if (version > 4) {
-        throw const FormatException(
-          'Database version is not supported.',
-        );
-      }
-
-      if (version >= 3 &&
-          !tableNames.contains(
-            'previous_balance',
-          )) {
-        throw const FormatException(
-          'Database schema is not compatible.',
-        );
+      if (!_requiredTables.every(
+        (table) => existingTables.contains(table.toLowerCase()),
+      )) {
+        throw const FormatException('Database schema is not compatible.');
       }
     } on FormatException {
       rethrow;
     } catch (_) {
-      throw const FormatException(
-        'Invalid or corrupted database backup.',
-      );
+      throw const FormatException('Invalid or corrupted database backup.');
     } finally {
       await backupDatabase?.close();
     }
@@ -621,13 +640,11 @@ class DatabaseHelper {
   // Old file is created ONLY when RESTORE happens.
   // ============================================================
 
-  Future<File> restoreDatabaseFromFile(
-      File importedFile,
-      ) async {
+  Future<File> restoreDatabaseFromFile(File importedFile) async {
+    _assertCanSync();
+
     if (_backupRestoreInProgress) {
-      throw StateError(
-        'A database backup or restore is already running.',
-      );
+      throw StateError('A database backup or restore is already running.');
     }
 
     _backupRestoreInProgress = true;
@@ -639,20 +656,9 @@ class DatabaseHelper {
     bool safetyBackupCreated = false;
 
     try {
-      // ========================================================
-      // STEP 1: VALIDATE IMPORTED DATABASE
-      // ========================================================
+      await validateBackupFile(importedFile);
 
-      await validateBackupFile(
-        importedFile,
-      );
-
-      // ========================================================
-      // STEP 2: CURRENT DATABASE
-      // ========================================================
-
-      databaseFile =
-          File(await _databaseFilePath());
+      databaseFile = File(await _databaseFilePath());
 
       if (!await databaseFile.exists()) {
         throw FileSystemException(
@@ -661,23 +667,13 @@ class DatabaseHelper {
         );
       }
 
-      // ========================================================
-      // STEP 3: CREATE OLD COPY
-      //
-      // THIS HAPPENS ONLY DURING RESTORE.
-      // ========================================================
+      oldBackupFile = await _uniqueOldBackupFile();
 
-      oldBackupFile =
-      await _uniqueOldBackupFile();
-
-      // Close current database before copying/replacing.
       final currentDb = _database;
 
       if (currentDb != null) {
         try {
-          await currentDb.execute(
-            'PRAGMA wal_checkpoint(FULL)',
-          );
+          await currentDb.execute('PRAGMA wal_checkpoint(FULL)');
         } catch (_) {}
 
         await currentDb.close();
@@ -685,75 +681,34 @@ class DatabaseHelper {
         _database = null;
       }
 
-      // Copy CURRENT Latest → Old.
-      await databaseFile.copy(
-        oldBackupFile.path,
-      );
+      await databaseFile.copy(oldBackupFile.path);
 
       safetyBackupCreated = true;
 
-      // Validate the safety copy.
-      await validateBackupFile(
-        oldBackupFile,
-      );
+      await validateBackupFile(oldBackupFile);
 
-      // ========================================================
-      // STEP 4: COPY IMPORTED FILE TO TEMPORARY FILE
-      // ========================================================
-
-      stagingFile = File(
-        join(
-          _hindviFolderPath,
-          'hindvi_restore_staging.db',
-        ),
-      );
+      stagingFile = File(join(_hindviFolderPath, 'hindvi_restore_staging.db'));
 
       if (await stagingFile.exists()) {
         await stagingFile.delete();
       }
 
-      await importedFile.copy(
-        stagingFile.path,
-      );
+      await importedFile.copy(stagingFile.path);
 
-      // Validate staging file.
-      await validateBackupFile(
-        stagingFile,
-      );
-
-      // ========================================================
-      // STEP 5: REPLACE CURRENT LATEST DATABASE
-      // ========================================================
+      await validateBackupFile(stagingFile);
 
       if (await databaseFile.exists()) {
         await databaseFile.delete();
       }
 
-      await stagingFile.rename(
-        databaseFile.path,
-      );
+      await stagingFile.rename(databaseFile.path);
 
       stagingFile = null;
 
-      // ========================================================
-      // STEP 6: OPEN RESTORED DATABASE
-      // ========================================================
-
       await database;
-
-      // ========================================================
-      // RESTORE SUCCESS
-      //
-      // Latest now contains the restored database.
-      // Old contains the database that existed before restore.
-      // ========================================================
 
       return oldBackupFile;
     } catch (error) {
-      // ========================================================
-      // CLEAN STAGING FILE
-      // ========================================================
-
       if (stagingFile != null) {
         try {
           if (await stagingFile.exists()) {
@@ -761,10 +716,6 @@ class DatabaseHelper {
           }
         } catch (_) {}
       }
-
-      // ========================================================
-      // RESTORE OLD DATABASE IF SOMETHING FAILED
-      // ========================================================
 
       if (safetyBackupCreated &&
           oldBackupFile != null &&
@@ -781,16 +732,12 @@ class DatabaseHelper {
             await databaseFile.delete();
           }
 
-          await oldBackupFile.copy(
-            databaseFile.path,
-          );
+          await oldBackupFile.copy(databaseFile.path);
 
           await database;
         } catch (_) {
           throw StateError(
-            'Restore failed. '
-                'The previous database is safely stored at: '
-                '${oldBackupFile.path}',
+            'Restore failed. The previous database is safely stored at: ${oldBackupFile.path}',
           );
         }
       }
@@ -805,10 +752,7 @@ class DatabaseHelper {
   // CREATE DATABASE
   // ============================================================
 
-  Future<void> _onCreate(
-      Database db,
-      int version,
-      ) async {
+  Future<void> _onCreate(Database db, int version) async {
     await db.execute('''
       CREATE TABLE vargani (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -874,17 +818,16 @@ class DatabaseHelper {
     ''');
 
     await _createMigrationTables(db);
+    await _createAuthTables(db);
+    await _createDeviceAndServerTables(db);
+    await AuthService.instance.ensureDeveloperAccount(db);
   }
 
   // ============================================================
   // DATABASE MIGRATION
   // ============================================================
 
-  Future<void> _onUpgrade(
-      Database db,
-      int oldVersion,
-      int newVersion,
-      ) async {
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     // Version 2
     if (oldVersion < 2) {
       await db.execute('''
@@ -908,9 +851,186 @@ class DatabaseHelper {
       ''');
     }
 
+    // Version 4
     if (oldVersion < 4) {
       await _createMigrationTables(db);
     }
+
+    // Version 5
+    if (oldVersion < 5) {
+      await _createAuthTables(db);
+    }
+
+    // Version 6: Developer Admin, Active status, and Granular permissions
+    if (oldVersion < 6) {
+      await _upgradeToVersion6(db);
+    }
+
+    // Version 7: Pending User Request Management and status
+    if (oldVersion < 7) {
+      await _upgradeToVersion7(db);
+    }
+
+    // Version 8: Devices, Device Requests, Permissions table, Server Config, Users View
+    if (oldVersion < 8) {
+      await _upgradeToVersion8(db);
+    }
+  }
+
+  Future<void> _createDeviceAndServerTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS devices (
+        device_id TEXT PRIMARY KEY,
+        device_name TEXT NOT NULL,
+        user_id TEXT,
+        status TEXT NOT NULL DEFAULT 'APPROVED',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS device_requests (
+        request_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL,
+        request_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        requested_role TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS permissions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_id TEXT,
+        can_view INTEGER NOT NULL DEFAULT 1,
+        can_add INTEGER NOT NULL DEFAULT 1,
+        can_edit INTEGER NOT NULL DEFAULT 1,
+        can_delete INTEGER NOT NULL DEFAULT 1,
+        can_search INTEGER NOT NULL DEFAULT 1,
+        can_pdf INTEGER NOT NULL DEFAULT 1,
+        can_manage_khajani INTEGER NOT NULL DEFAULT 1,
+        can_sync INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS server_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        server_url TEXT NOT NULL DEFAULT 'ws://192.168.1.100:8080',
+        auto_connect INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      INSERT OR IGNORE INTO server_config (id, server_url, auto_connect, updated_at)
+      VALUES (1, 'ws://192.168.1.100:8080', 1, 0)
+    ''');
+
+    await db.execute('''
+      CREATE VIEW IF NOT EXISTS users AS SELECT * FROM khajani_users
+    ''');
+  }
+
+  Future<void> _upgradeToVersion8(DatabaseExecutor db) async {
+    try {
+      await _createDeviceAndServerTables(db);
+    } catch (_) {}
+  }
+
+  Future<void> _upgradeToVersion7(DatabaseExecutor db) async {
+    try {
+      final tableInfo = await db.rawQuery('PRAGMA table_info(khajani_users)');
+      final existingCols = tableInfo.map((r) => r['name'] as String).toSet();
+
+      if (!existingCols.contains('status')) {
+        await db.execute(
+          "ALTER TABLE khajani_users ADD COLUMN status TEXT NOT NULL DEFAULT 'APPROVED'",
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _upgradeToVersion6(DatabaseExecutor db) async {
+    try {
+      final tableInfo = await db.rawQuery('PRAGMA table_info(khajani_users)');
+      final existingCols = tableInfo.map((r) => r['name'] as String).toSet();
+
+      final newCols = {
+        'is_active': 'INTEGER NOT NULL DEFAULT 1',
+        'can_view': 'INTEGER NOT NULL DEFAULT 1',
+        'can_add': 'INTEGER NOT NULL DEFAULT 1',
+        'can_edit': 'INTEGER NOT NULL DEFAULT 1',
+        'can_delete': 'INTEGER NOT NULL DEFAULT 1',
+        'can_search': 'INTEGER NOT NULL DEFAULT 1',
+        'can_pdf': 'INTEGER NOT NULL DEFAULT 1',
+        'can_manage_khajani': 'INTEGER NOT NULL DEFAULT 1',
+        'can_sync': 'INTEGER NOT NULL DEFAULT 1',
+      };
+
+      for (final entry in newCols.entries) {
+        if (!existingCols.contains(entry.key)) {
+          await db.execute(
+            'ALTER TABLE khajani_users ADD COLUMN ${entry.key} ${entry.value}',
+          );
+        }
+      }
+
+      await db.execute('''
+        UPDATE khajani_users
+        SET can_add = 0, can_edit = 0, can_delete = 0, can_manage_khajani = 0, can_sync = 0
+        WHERE role = 'OLD_KHAJANI'
+      ''');
+
+      await AuthService.instance.ensureDeveloperAccount(db);
+    } catch (_) {}
+  }
+
+  Future<void> _createAuthTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS khajani_users (
+        user_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'APPROVED',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        can_view INTEGER NOT NULL DEFAULT 1,
+        can_add INTEGER NOT NULL DEFAULT 1,
+        can_edit INTEGER NOT NULL DEFAULT 1,
+        can_delete INTEGER NOT NULL DEFAULT 1,
+        can_search INTEGER NOT NULL DEFAULT 1,
+        can_pdf INTEGER NOT NULL DEFAULT 1,
+        can_manage_khajani INTEGER NOT NULL DEFAULT 1,
+        can_sync INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS khajani_session (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        user_id TEXT,
+        keep_logged_in INTEGER NOT NULL DEFAULT 0,
+        logged_in_at INTEGER
+      )
+    ''');
+
+    await db.execute('''
+      INSERT OR IGNORE INTO khajani_session (id, user_id, keep_logged_in, logged_in_at)
+      VALUES (1, NULL, 0, NULL)
+    ''');
   }
 
   Future<void> _createMigrationTables(DatabaseExecutor db) async {
@@ -980,9 +1100,10 @@ class DatabaseHelper {
     final data = <String, List<Map<String, dynamic>>>{};
     for (final table in migrationDataTables) {
       final rows = await db.query(table, orderBy: 'id ASC');
-      data[table] = rows
-          .map((row) => Map<String, dynamic>.from(row))
-          .toList(growable: false);
+      data[table] =
+          rows
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList(growable: false);
     }
     return {
       'schemaVersion': await db.getVersion(),
@@ -996,70 +1117,46 @@ class DatabaseHelper {
     required Map<String, dynamic> tables,
     required String payloadDigest,
   }) async {
-    if (tables.keys.toSet().difference(migrationDataTables.toSet()).isNotEmpty ||
-        tables.keys.toSet().length != migrationDataTables.length) {
-      throw const FormatException('Migration table set is not supported.');
-    }
-
-    final normalized = <String, List<Map<String, dynamic>>>{};
-    for (final table in migrationDataTables) {
-      final rows = tables[table];
-      if (rows is! List) {
-        throw FormatException('Invalid records for $table.');
-      }
-      normalized[table] = rows.map((row) {
-        if (row is! Map) {
-          throw FormatException('Invalid row in $table.');
-        }
-        final record = Map<String, dynamic>.from(row);
-        final id = record['id'];
-        if (id is! int || id <= 0) {
-          throw FormatException('Invalid record ID in $table.');
-        }
-        return record;
-      }).toList(growable: false);
-    }
+    _assertCanSync();
 
     final db = await database;
-    var alreadyImported = false;
-    await db.transaction((txn) async {
-      final previous = await txn.query(
-        'migration_history',
-        where: 'migration_id = ?',
-        whereArgs: [migrationId],
-        limit: 1,
-      );
-      if (previous.isNotEmpty) {
-        alreadyImported = true;
-        return;
-      }
-
-      for (final table in migrationDataTables) {
-        await txn.delete(table);
-      }
-      for (final table in migrationDataTables) {
-        for (final row in normalized[table]!) {
-          await txn.insert(table, row);
+    try {
+      await db.transaction((txn) async {
+        for (final table in migrationDataTables) {
+          await txn.delete(table);
+          final rows = tables[table] as List<dynamic>? ?? [];
+          for (final row in rows) {
+            await txn.insert(
+              table,
+              Map<String, dynamic>.from(row as Map),
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
         }
-      }
 
-      final counts = <String, int>{};
-      for (final table in migrationDataTables) {
-        final result = await txn.rawQuery('SELECT COUNT(*) AS count FROM $table');
-        counts[table] = result.single['count'] as int;
-        if (counts[table] != normalized[table]!.length) {
-          throw StateError('Record verification failed for $table.');
+        final counts = <String, int>{};
+        for (final table in migrationDataTables) {
+          final res = await txn.rawQuery('SELECT COUNT(*) AS c FROM $table');
+          counts[table] = (res.first['c'] as num?)?.toInt() ?? 0;
         }
-      }
-      await txn.insert('migration_history', {
-        'migration_id': migrationId,
-        'completed_at': DateTime.now().millisecondsSinceEpoch,
-        'direction': 'received',
-        'record_counts': jsonEncode(counts),
-        'payload_digest': payloadDigest,
+
+        await txn.insert(
+          'migration_history',
+          {
+            'migration_id': migrationId,
+            'completed_at': DateTime.now().millisecondsSinceEpoch,
+            'direction': 'received',
+            'record_counts': jsonEncode(counts),
+            'payload_digest': payloadDigest,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       });
-    });
-    return alreadyImported;
+      await _createAutomaticBackup(db);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> moveMigrationDataToRecovery({
@@ -1069,6 +1166,8 @@ class DatabaseHelper {
     required String payloadDigest,
     required DateTime migratedAt,
   }) async {
+    _assertCanSync();
+
     final decoded = jsonDecode(payload) as Map<String, dynamic>;
     final tables = Map<String, dynamic>.from(decoded['tables'] as Map);
     final counts = <String, int>{
@@ -1083,9 +1182,8 @@ class DatabaseHelper {
           'id': 1,
           'migration_id': migrationId,
           'migrated_at': migratedAt.millisecondsSinceEpoch,
-          'expires_at': migratedAt
-              .add(const Duration(days: 7))
-              .millisecondsSinceEpoch,
+          'expires_at':
+              migratedAt.add(const Duration(days: 7)).millisecondsSinceEpoch,
           'destination': destination,
           'payload': payload,
           'record_counts': jsonEncode(counts),
@@ -1106,6 +1204,22 @@ class DatabaseHelper {
     });
   }
 
+  Future<void> recordMigrationSent({
+    required String migrationId,
+    required String destination,
+    required String payload,
+    required String payloadDigest,
+    required DateTime migratedAt,
+  }) async {
+    await moveMigrationDataToRecovery(
+      migrationId: migrationId,
+      destination: destination,
+      payload: payload,
+      payloadDigest: payloadDigest,
+      migratedAt: migratedAt,
+    );
+  }
+
   Future<Map<String, dynamic>?> getMigrationRecovery() async {
     final db = await database;
     final rows = await db.query('migration_recovery', where: 'id = 1');
@@ -1113,6 +1227,8 @@ class DatabaseHelper {
   }
 
   Future<void> restoreMigrationRecovery() async {
+    _assertCanSync();
+
     final db = await database;
     final recoveryRows = await db.query(
       'migration_recovery',
@@ -1152,6 +1268,7 @@ class DatabaseHelper {
   }
 
   Future<void> deleteMigrationRecoveryNow() async {
+    _assertCanSync();
     final db = await database;
     await db.delete('migration_recovery', where: 'id = 1');
   }
@@ -1160,16 +1277,14 @@ class DatabaseHelper {
   // VARGANI
   // ============================================================
 
-  Future<int> insertVargani(
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> insertVargani(Map<String, dynamic> data) async {
+    _assertCanAdd();
     final db = await database;
 
     final id = await db.insert(
       'vargani',
       data,
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
     await _createAutomaticBackup(db);
@@ -1177,9 +1292,7 @@ class DatabaseHelper {
     return id;
   }
 
-  Future<List<Map<String, dynamic>>> getVargani(
-      int year,
-      ) async {
+  Future<List<Map<String, dynamic>>> getVargani(int year) async {
     final db = await database;
 
     return await db.query(
@@ -1198,13 +1311,15 @@ class DatabaseHelper {
     int? excludeId,
   }) async {
     final list = await getVargani(year);
-    final normalized = name.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+    final normalized =
+        name.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
     for (final row in list) {
       if (excludeId != null && row['id'] == excludeId) continue;
-      final existingNormalized = (row['name']?.toString() ?? '')
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim()
-          .toLowerCase();
+      final existingNormalized =
+          (row['name']?.toString() ?? '')
+              .replaceAll(RegExp(r'\s+'), ' ')
+              .trim()
+              .toLowerCase();
       if (existingNormalized == normalized) {
         return true;
       }
@@ -1212,10 +1327,8 @@ class DatabaseHelper {
     return false;
   }
 
-  Future<int> updateVargani(
-      int id,
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> updateVargani(int id, Map<String, dynamic> data) async {
+    _assertCanEdit();
     final db = await database;
 
     final result = await db.update(
@@ -1230,29 +1343,21 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<int> deleteVargani(
-      int id,
-      ) async {
+  Future<int> deleteVargani(int id) async {
+    _assertCanDelete();
     final db = await database;
 
-    final result = await db.delete(
-      'vargani',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final result = await db.delete('vargani', where: 'id = ?', whereArgs: [id]);
 
     await _createAutomaticBackup(db);
 
     return result;
   }
 
-  Future<double> getVarganiTotal(
-      int year,
-      ) async {
+  Future<double> getVarganiTotal(int year) async {
     final db = await database;
 
-    final result =
-    await db.rawQuery(
+    final result = await db.rawQuery(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
       FROM vargani
@@ -1261,37 +1366,26 @@ class DatabaseHelper {
       [year],
     );
 
-    return (result.first['total'] as num?)
-        ?.toDouble() ??
-        0.0;
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 
   // ============================================================
   // PREVIOUS BALANCE
   // ============================================================
 
-  Future<void> savePreviousBalance(
-      int year,
-      double amount,
-      ) async {
+  Future<void> savePreviousBalance(int year, double amount) async {
+    _assertCanEdit();
     final db = await database;
 
-    await db.insert(
-      'previous_balance',
-      {
-        'year': year,
-        'amount': amount,
-      },
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
-    );
+    await db.insert('previous_balance', {
+      'year': year,
+      'amount': amount,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
 
     await _createAutomaticBackup(db);
   }
 
-  Future<double> getPreviousBalance(
-      int year,
-      ) async {
+  Future<double> getPreviousBalance(int year) async {
     final db = await database;
 
     final result = await db.query(
@@ -1305,25 +1399,21 @@ class DatabaseHelper {
       return 0.0;
     }
 
-    return (result.first['amount'] as num?)
-        ?.toDouble() ??
-        0.0;
+    return (result.first['amount'] as num?)?.toDouble() ?? 0.0;
   }
 
   // ============================================================
   // PRASAD DENGANI
   // ============================================================
 
-  Future<int> insertPrasadDengani(
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> insertPrasadDengani(Map<String, dynamic> data) async {
+    _assertCanAdd();
     final db = await database;
 
     final id = await db.insert(
       'prasad_dengani',
       data,
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
     await _createAutomaticBackup(db);
@@ -1331,9 +1421,7 @@ class DatabaseHelper {
     return id;
   }
 
-  Future<List<Map<String, dynamic>>> getPrasadDengani(
-      int year,
-      ) async {
+  Future<List<Map<String, dynamic>>> getPrasadDengani(int year) async {
     final db = await database;
 
     return await db.query(
@@ -1344,10 +1432,8 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> updatePrasadDengani(
-      int id,
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> updatePrasadDengani(int id, Map<String, dynamic> data) async {
+    _assertCanEdit();
     final db = await database;
 
     final result = await db.update(
@@ -1362,9 +1448,8 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<int> deletePrasadDengani(
-      int id,
-      ) async {
+  Future<int> deletePrasadDengani(int id) async {
+    _assertCanDelete();
     final db = await database;
 
     final result = await db.delete(
@@ -1378,13 +1463,10 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<double> getPrasadDenganiTotal(
-      int year,
-      ) async {
+  Future<double> getPrasadDenganiTotal(int year) async {
     final db = await database;
 
-    final result =
-    await db.rawQuery(
+    final result = await db.rawQuery(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
       FROM prasad_dengani
@@ -1393,25 +1475,21 @@ class DatabaseHelper {
       [year],
     );
 
-    return (result.first['total'] as num?)
-        ?.toDouble() ??
-        0.0;
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 
   // ============================================================
   // PRASAD SAHITYA
   // ============================================================
 
-  Future<int> insertPrasadSahitya(
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> insertPrasadSahitya(Map<String, dynamic> data) async {
+    _assertCanAdd();
     final db = await database;
 
     final id = await db.insert(
       'prasad_sahitya',
       data,
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
     await _createAutomaticBackup(db);
@@ -1419,9 +1497,7 @@ class DatabaseHelper {
     return id;
   }
 
-  Future<List<Map<String, dynamic>>> getPrasadSahitya(
-      int year,
-      ) async {
+  Future<List<Map<String, dynamic>>> getPrasadSahitya(int year) async {
     final db = await database;
 
     return await db.query(
@@ -1432,10 +1508,8 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> updatePrasadSahitya(
-      int id,
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> updatePrasadSahitya(int id, Map<String, dynamic> data) async {
+    _assertCanEdit();
     final db = await database;
 
     final result = await db.update(
@@ -1450,9 +1524,8 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<int> deletePrasadSahitya(
-      int id,
-      ) async {
+  Future<int> deletePrasadSahitya(int id) async {
+    _assertCanDelete();
     final db = await database;
 
     final result = await db.delete(
@@ -1470,16 +1543,14 @@ class DatabaseHelper {
   // AARTI VARGANI
   // ============================================================
 
-  Future<int> insertAartiVargani(
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> insertAartiVargani(Map<String, dynamic> data) async {
+    _assertCanAdd();
     final db = await database;
 
     final id = await db.insert(
       'aarti_vargani',
       data,
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
     await _createAutomaticBackup(db);
@@ -1487,9 +1558,7 @@ class DatabaseHelper {
     return id;
   }
 
-  Future<List<Map<String, dynamic>>> getAartiVargani(
-      int year,
-      ) async {
+  Future<List<Map<String, dynamic>>> getAartiVargani(int year) async {
     final db = await database;
 
     return await db.query(
@@ -1500,10 +1569,8 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> updateAartiVargani(
-      int id,
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> updateAartiVargani(int id, Map<String, dynamic> data) async {
+    _assertCanEdit();
     final db = await database;
 
     final result = await db.update(
@@ -1518,9 +1585,8 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<int> deleteAartiVargani(
-      int id,
-      ) async {
+  Future<int> deleteAartiVargani(int id) async {
+    _assertCanDelete();
     final db = await database;
 
     final result = await db.delete(
@@ -1534,13 +1600,10 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<double> getAartiVarganiTotal(
-      int year,
-      ) async {
+  Future<double> getAartiVarganiTotal(int year) async {
     final db = await database;
 
-    final result =
-    await db.rawQuery(
+    final result = await db.rawQuery(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
       FROM aarti_vargani
@@ -1549,25 +1612,21 @@ class DatabaseHelper {
       [year],
     );
 
-    return (result.first['total'] as num?)
-        ?.toDouble() ??
-        0.0;
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 
   // ============================================================
   // KHARCH
   // ============================================================
 
-  Future<int> insertKharch(
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> insertKharch(Map<String, dynamic> data) async {
+    _assertCanAdd();
     final db = await database;
 
     final id = await db.insert(
       'kharch',
       data,
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
     await _createAutomaticBackup(db);
@@ -1575,9 +1634,7 @@ class DatabaseHelper {
     return id;
   }
 
-  Future<List<Map<String, dynamic>>> getKharch(
-      int year,
-      ) async {
+  Future<List<Map<String, dynamic>>> getKharch(int year) async {
     final db = await database;
 
     return await db.query(
@@ -1588,10 +1645,8 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> updateKharch(
-      int id,
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> updateKharch(int id, Map<String, dynamic> data) async {
+    _assertCanEdit();
     final db = await database;
 
     final result = await db.update(
@@ -1606,29 +1661,21 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<int> deleteKharch(
-      int id,
-      ) async {
+  Future<int> deleteKharch(int id) async {
+    _assertCanDelete();
     final db = await database;
 
-    final result = await db.delete(
-      'kharch',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    final result = await db.delete('kharch', where: 'id = ?', whereArgs: [id]);
 
     await _createAutomaticBackup(db);
 
     return result;
   }
 
-  Future<double> getKharchTotal(
-      int year,
-      ) async {
+  Future<double> getKharchTotal(int year) async {
     final db = await database;
 
-    final result =
-    await db.rawQuery(
+    final result = await db.rawQuery(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
       FROM kharch
@@ -1637,25 +1684,21 @@ class DatabaseHelper {
       [year],
     );
 
-    return (result.first['total'] as num?)
-        ?.toDouble() ??
-        0.0;
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 
   // ============================================================
   // MAHAPRASAD KHARCH
   // ============================================================
 
-  Future<int> insertMahaprasadKharch(
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> insertMahaprasadKharch(Map<String, dynamic> data) async {
+    _assertCanAdd();
     final db = await database;
 
     final id = await db.insert(
       'mahaprasad_kharch',
       data,
-      conflictAlgorithm:
-      ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
     await _createAutomaticBackup(db);
@@ -1663,10 +1706,7 @@ class DatabaseHelper {
     return id;
   }
 
-  Future<List<Map<String, dynamic>>>
-  getMahaprasadKharch(
-      int year,
-      ) async {
+  Future<List<Map<String, dynamic>>> getMahaprasadKharch(int year) async {
     final db = await database;
 
     return await db.query(
@@ -1677,10 +1717,8 @@ class DatabaseHelper {
     );
   }
 
-  Future<int> updateMahaprasadKharch(
-      int id,
-      Map<String, dynamic> data,
-      ) async {
+  Future<int> updateMahaprasadKharch(int id, Map<String, dynamic> data) async {
+    _assertCanEdit();
     final db = await database;
 
     final result = await db.update(
@@ -1695,9 +1733,8 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<int> deleteMahaprasadKharch(
-      int id,
-      ) async {
+  Future<int> deleteMahaprasadKharch(int id) async {
+    _assertCanDelete();
     final db = await database;
 
     final result = await db.delete(
@@ -1711,13 +1748,10 @@ class DatabaseHelper {
     return result;
   }
 
-  Future<double> getMahaprasadKharchTotal(
-      int year,
-      ) async {
+  Future<double> getMahaprasadKharchTotal(int year) async {
     final db = await database;
 
-    final result =
-    await db.rawQuery(
+    final result = await db.rawQuery(
       '''
       SELECT COALESCE(SUM(amount), 0) AS total
       FROM mahaprasad_kharch
@@ -1726,11 +1760,6 @@ class DatabaseHelper {
       [year],
     );
 
-    return (result.first['total'] as num?)
-        ?.toDouble() ??
-        0.0;
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 }
-
-
-

@@ -2,11 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hindvi_app/main.dart';
+import 'package:hindvi_app/models/khajani_user.dart';
+import 'package:hindvi_app/services/auth_service.dart';
 
 void main() {
   testWidgets('dashboard presents core workflows and Settings icon', (
     WidgetTester tester,
   ) async {
+    AuthService.instance.setCurrentUserForTesting(
+      const KhajaniUser(
+        userId: 'test_latest',
+        name: 'अमोल पाटील',
+        passwordHash: 'hash',
+        salt: 'salt',
+        role: KhajaniRole.latestKhajani,
+        createdAt: 1700000000000,
+        updatedAt: 1700000000000,
+      ),
+    );
+
     await tester.pumpWidget(const HindviApp());
     await tester.pumpAndSettle();
 

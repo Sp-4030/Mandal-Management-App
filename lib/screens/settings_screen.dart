@@ -2,14 +2,20 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'package:share_plus/share_plus.dart';
 
 import '../database/database_helper.dart';
+import '../services/auth_service.dart';
+import '../services/device_service.dart';
+import '../services/signaling_service.dart';
+import 'app_update_screen.dart';
+import 'khajani_management_screen.dart';
+import 'login_screen.dart';
 import 'mandal_data_transfer_screen.dart';
 import 'recovery_data_screen.dart';
 import 'restore_screen.dart';
-import 'app_update_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,14 +26,26 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final DatabaseHelper _databaseHelper = DatabaseHelper.instance;
+  final AuthService _authService = AuthService.instance;
 
   DateTime? _lastBackupTime;
   bool _isLoadingLastBackup = true;
+  String _currentDeviceId = '';
 
   @override
   void initState() {
     super.initState();
     _loadLastBackupTime();
+    _loadDeviceId();
+  }
+
+  Future<void> _loadDeviceId() async {
+    try {
+      final id = await DeviceService.instance.getDeviceId();
+      if (mounted) {
+        setState(() => _currentDeviceId = id);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadLastBackupTime() async {
@@ -57,7 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'सप्टेंबर',
       'ऑक्टोबर',
       'नोव्हेंबर',
-      'डिसेंबर'
+      'डिसेंबर',
     ];
     final period = dt.hour >= 12 ? 'PM' : 'AM';
     final hour12 = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
@@ -82,9 +100,247 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _handleLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Text('लॉगआउट पुष्टी'),
+          content: const Text(
+            'तुम्हाला खरोखर खात्यातून लॉगआउट करायचे आहे का?\n\n'
+            'लॉगआउट केल्यावर पुन्हा नाव व पासवर्ड टाकून लॉगिन करावे लागेल.',
+            style: TextStyle(height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('रद्द करा'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('लॉगआउट करा'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    await _authService.logout();
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => const KhajaniLoginScreen(),
+      ),
+      (route) => false,
+    );
+  }
+
+  void _showSignalingServerDialog() {
+    final urlController = TextEditingController(
+      text: SignalingService.instance.serverUrl,
+    );
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.computer, color: Color(0xFFB94D00)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('PC Signaling Server', style: TextStyle(fontSize: 17)),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              StreamBuilder<bool>(
+                stream: SignalingService.instance.isConnectedStream,
+                initialData: SignalingService.instance.isConnected,
+                builder: (context, snapshot) {
+                  final isOnline = snapshot.data ?? false;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: isOnline ? Colors.green.shade50 : Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isOnline ? Colors.green.shade300 : Colors.red.shade300,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isOnline ? Icons.check_circle : Icons.error_outline,
+                          color: isOnline ? Colors.green : Colors.red,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          isOnline
+                              ? 'Server is ON 🟢'
+                              : 'Server is OFF 🔴',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isOnline ? Colors.green.shade900 : Colors.red.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const Text(
+                'PC वरील WebSocket Signaling Server URL:\n(उदा: ws://192.168.1.100:8080 किंवा बोगदा ws://xxxx.ngrok-free.app)',
+                style: TextStyle(fontSize: 12, color: Color(0xFF756A5D)),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  hintText: 'ws://192.168.1.X:8080',
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('रद्द करा'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final newUrl = urlController.text.trim();
+                if (newUrl.isNotEmpty) {
+                  await SignalingService.instance.setServerUrl(newUrl);
+                  if (dialogCtx.mounted) {
+                    Navigator.pop(dialogCtx);
+                  }
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('सर्व्हर पत्ता जतन केला!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                    setState(() {});
+                  }
+                }
+              },
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF7A00)),
+              child: const Text('जतन करा'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showDeviceInfoDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.perm_device_information_outlined, color: Color(0xFFB94D00)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('डिव्हाइस ओळख (Device ID)', style: TextStyle(fontSize: 17)),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'या उपकरणाला प्रणालीद्वारे एक कायमचा युनिक Device ID दिलेला आहे. '
+                'हा ID युजर खात्यापेक्षा वेगळा असून Developer कडून मंजुरी व नियंत्रणासाठी वापरला जातो.',
+                style: TextStyle(fontSize: 12.5, color: Color(0xFF756A5D), height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3CD),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFFFD57A)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Permanent Device ID:',
+                            style: TextStyle(fontSize: 11, color: Color(0xFF856404)),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _currentDeviceId.isNotEmpty ? _currentDeviceId : 'शोधत आहे...',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF533F03),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, color: Color(0xFF856404)),
+                      tooltip: 'Device ID कॉपी करा',
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: _currentDeviceId));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Device ID कॉपी केला!'),
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('बंद करा'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const deepSaffron = Color(0xFFB94D00);
+    final currentUser = _authService.currentUser;
+    final isDeveloper = _authService.isDeveloper;
+    final isLatest = _authService.isLatestKhajani;
 
     return Scaffold(
       appBar: AppBar(
@@ -93,7 +349,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          // Section Header
+          // Section 1: डेटा व्यवस्थापन
           Text(
             'डेटा व्यवस्थापन',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -111,7 +367,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // 1. मंडळ डेटा ट्रान्सफर
+          // 1.1 मंडळ डेटा ट्रान्सफर
           _settingsOptionTile(
             context: context,
             icon: Icons.sync_alt,
@@ -119,6 +375,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             description:
                 'जुन्या फोनमधील संपूर्ण मंडळ डेटा नवीन फोनमध्ये सुरक्षितपणे ट्रान्सफर करा.',
             onTap: () {
+              if (!_authService.canSync) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'मंडळ डेटा ट्रान्सफर / सिंक करण्याची परवानगी आपल्या खात्याला नाही. कृपया Developer शी संपर्क साधा.',
+                    ),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -129,7 +396,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
-          // 2. बॅकअप
+          // 1.2 बॅकअप
           _settingsOptionTile(
             context: context,
             icon: Icons.backup_outlined,
@@ -144,13 +411,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
-          // 3. रिस्टोर
+          // 1.3 रिस्टोर
           _settingsOptionTile(
             context: context,
             icon: Icons.restore,
             title: 'रिस्टोर',
             description: 'पूर्वी तयार केलेल्या बॅकअपमधून डेटा परत मिळवा.',
             onTap: () {
+              if (!_authService.canSync) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'डेटाबेस रिस्टोर करण्याची परवानगी आपल्या खात्याला नाही. कृपया Developer शी संपर्क साधा.',
+                    ),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -161,7 +439,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
-          // 4. जुना / Recovery Data
+          // 1.4 जुना / Recovery Data
           _settingsOptionTile(
             context: context,
             icon: Icons.history,
@@ -179,7 +457,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
-          // 5. App Update
+          // 1.5 App Update
           _settingsOptionTile(
             context: context,
             icon: Icons.system_update_rounded,
@@ -195,6 +473,122 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
+          const SizedBox(height: 24),
+
+          // Section 2: खजानी खाते व व्यवस्थापन
+          Text(
+            'खजानी व्यवस्थापन',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF25231F),
+                ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'खजानी माहिती, अधिकार हस्तांतरण आणि खाते नियंत्रण.',
+            style: TextStyle(
+              fontSize: 13,
+              color: Color(0xFF756A5D),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // 2.1 Khajani Management Tile
+          _settingsOptionTile(
+            context: context,
+            icon: Icons.manage_accounts_outlined,
+            title: 'खजानी व्यवस्थापन',
+            description: isDeveloper
+                ? 'Developer Control: सर्व खाती, भूमिका व परवानग्या व्यवस्थापित करा.'
+                : 'चालू व माजी खजानींची यादी पहा आणि नवीन खजानी सेट करून अधिकार हस्तांतरित करा.',
+            badge: currentUser != null
+                ? (isDeveloper
+                    ? 'Developer (सर्वोच्च ॲडमिन)'
+                    : '${currentUser.name} (${isLatest ? "चालू" : "माजी"})')
+                : null,
+            onTap: () {
+              if (!_authService.canManageKhajani && !isDeveloper) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'खजानी व्यवस्थापन पाहण्याची किंवा बदलण्याची परवानगी आपल्या खात्याला नाही. कृपया Developer शी संपर्क साधा.',
+                    ),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const KhajaniManagementScreen(),
+                ),
+              ).then((_) {
+                if (mounted) setState(() {});
+              });
+            },
+          ),
+          const SizedBox(height: 24),
+
+          // Section 3: रिमोट संप्रेषण व डिव्हाइस माहिती
+          Text(
+            'रिमोट संप्रेषण व डिव्हाइस',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF25231F),
+                ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'PC WebSocket सर्व्हर जोडणी व या उपकरणाचा कायमचा Device ID.',
+            style: TextStyle(
+              fontSize: 13,
+              color: Color(0xFF756A5D),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // 3.1 PC Signaling Server Tile
+          StreamBuilder<bool>(
+            stream: SignalingService.instance.isConnectedStream,
+            initialData: SignalingService.instance.isConnected,
+            builder: (context, snapshot) {
+              final isOnline = snapshot.data ?? false;
+              return _settingsOptionTile(
+                context: context,
+                icon: Icons.computer,
+                title: 'PC Signaling Server',
+                description:
+                    'सर्व्हर: ${SignalingService.instance.serverUrl}\n(टॅप करून IP किंवा पोर्ट बदला)',
+                badge: isOnline ? 'Server is ON 🟢' : 'Server is OFF 🔴',
+                onTap: _showSignalingServerDialog,
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // 3.2 Device Info Tile
+          _settingsOptionTile(
+            context: context,
+            icon: Icons.perm_device_information_outlined,
+            title: 'या उपकरणाचा Device ID',
+            description: _currentDeviceId.isNotEmpty
+                ? 'Device ID: $_currentDeviceId\n(टॅप करून कॉपी करा किंवा तपशील पहा)'
+                : 'उपकरण ओळख तयार करत आहे...',
+            badge: _currentDeviceId.isNotEmpty ? _currentDeviceId : null,
+            onTap: _showDeviceInfoDialog,
+          ),
+          const SizedBox(height: 24),
+
+          // 2.2 Logout Tile
+          _settingsOptionTile(
+            context: context,
+            icon: Icons.logout_rounded,
+            title: 'लॉगआउट',
+            description: 'खजानी खात्यातून सुरक्षितपणे बाहेर पडा.',
+            badge: currentUser?.name,
+            onTap: _handleLogout,
+          ),
           const SizedBox(height: 28),
 
           // Info / Storage path summary
@@ -205,10 +599,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFFFFE0BE)),
             ),
-            child: Column(
+            child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(Icons.folder_special_outlined,
                         color: deepSaffron, size: 20),
@@ -223,13 +617,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
+                SizedBox(height: 8),
+                Text(
                   'सक्रिय डेटाबेस:\n/storage/emulated/0/हिंदवी/hindvi_latest.db',
                   style: TextStyle(fontSize: 12, color: Color(0xFF555555)),
                 ),
-                const SizedBox(height: 6),
-                const Text(
+                SizedBox(height: 6),
+                Text(
                   'सुरक्षित Recovery फोल्डर:\n/storage/emulated/0/हिंदवी/Old/',
                   style: TextStyle(fontSize: 12, color: Color(0xFF555555)),
                 ),
@@ -388,7 +782,7 @@ class _BackupBottomSheetContentState extends State<_BackupBottomSheetContent> {
       'सप्टेंबर',
       'ऑक्टोबर',
       'नोव्हेंबर',
-      'डिसेंबर'
+      'डिसेंबर',
     ];
     final period = dt.hour >= 12 ? 'PM' : 'AM';
     final hour12 = dt.hour == 0 ? 12 : (dt.hour > 12 ? dt.hour - 12 : dt.hour);
@@ -406,6 +800,7 @@ class _BackupBottomSheetContentState extends State<_BackupBottomSheetContent> {
 
     try {
       final backup = await _databaseHelper.createExplicitBackup();
+
       if (!mounted) return;
 
       setState(() {
@@ -535,15 +930,15 @@ class _BackupBottomSheetContentState extends State<_BackupBottomSheetContent> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(
+                  const Text(
                     'स्थान: /storage/emulated/0/हिंदवी/hindvi_latest.db',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12, color: Color(0xFF555555)),
                   ),
                   const SizedBox(height: 4),
-                  Text(
+                  const Text(
                     'बॅकअप फोल्डर: /storage/emulated/0/हिंदवी/Old/',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12, color: Color(0xFF555555)),
                   ),
                   const Divider(height: 16),

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
+import '../services/auth_service.dart';
 import '../utils/record_delete.dart';
 
 class PrasadDenganiScreen extends StatefulWidget {
-  const PrasadDenganiScreen({super.key});
+  final bool initialLoading;
+  const PrasadDenganiScreen({super.key, this.initialLoading = true});
 
   @override
   State<PrasadDenganiScreen> createState() => _PrasadDenganiScreenState();
@@ -12,6 +14,7 @@ class PrasadDenganiScreen extends StatefulWidget {
 
 class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   final DatabaseHelper db = DatabaseHelper.instance;
+  final AuthService _authService = AuthService.instance;
 
   int selectedYear = DateTime.now().year;
 
@@ -22,12 +25,15 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   double prasadDenganiTotal = 0;
   double aartiVarganiTotal = 0;
 
-  bool isLoading = true;
+  late bool isLoading;
 
   @override
   void initState() {
     super.initState();
-    loadData();
+    isLoading = widget.initialLoading;
+    if (widget.initialLoading) {
+      loadData();
+    }
   }
 
   // ============================================================
@@ -39,13 +45,14 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
       isLoading = true;
     });
 
-    prasadDengani = await db.getPrasadDengani(selectedYear);
-    prasadSahitya = await db.getPrasadSahitya(selectedYear);
-    aartiVargani = await db.getAartiVargani(selectedYear);
+    try {
+      prasadDengani = await db.getPrasadDengani(selectedYear);
+      prasadSahitya = await db.getPrasadSahitya(selectedYear);
+      aartiVargani = await db.getAartiVargani(selectedYear);
 
-    prasadDenganiTotal = await db.getPrasadDenganiTotal(selectedYear);
-
-    aartiVarganiTotal = await db.getAartiVarganiTotal(selectedYear);
+      prasadDenganiTotal = await db.getPrasadDenganiTotal(selectedYear);
+      aartiVarganiTotal = await db.getAartiVarganiTotal(selectedYear);
+    } catch (_) {}
 
     if (!mounted) return;
 
@@ -119,8 +126,28 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     String? oldName,
     double? oldAmount,
   }) async {
-    final nameController = TextEditingController(text: oldName ?? '');
+    if (id == null && !_authService.canAdd) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास देणगी जोडण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (id != null && !_authService.canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास देणगी बदलण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
 
+    final nameController = TextEditingController(text: oldName ?? '');
     final amountController = TextEditingController(
       text: oldAmount == null ? '' : oldAmount.toString(),
     );
@@ -149,7 +176,6 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                     if (value == null || value.trim().isEmpty) {
                       return 'नाव टाका';
                     }
-
                     return null;
                   },
                 ),
@@ -160,7 +186,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                     decimal: true,
                   ),
                   decoration: const InputDecoration(
-                    labelText: 'रक्कम',
+                    labelText: 'जमा रक्कम',
                     border: OutlineInputBorder(),
                   ),
                   validator: (value) {
@@ -227,8 +253,28 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     String? oldName,
     String? oldItem,
   }) async {
-    final nameController = TextEditingController(text: oldName ?? '');
+    if (id == null && !_authService.canAdd) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास साहित्य जोडण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (id != null && !_authService.canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास साहित्य बदलण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
 
+    final nameController = TextEditingController(text: oldName ?? '');
     final itemController = TextEditingController(text: oldItem ?? '');
 
     final formKey = GlobalKey<FormState>();
@@ -255,7 +301,6 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                     if (value == null || value.trim().isEmpty) {
                       return 'नाव टाका';
                     }
-
                     return null;
                   },
                 ),
@@ -271,7 +316,6 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                     if (value == null || value.trim().isEmpty) {
                       return 'साहित्य टाका';
                     }
-
                     return null;
                   },
                 ),
@@ -325,8 +369,28 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     String? oldName,
     double? oldAmount,
   }) async {
-    final nameController = TextEditingController(text: oldName ?? '');
+    if (id == null && !_authService.canAdd) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास वर्गणी जोडण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (id != null && !_authService.canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास वर्गणी बदलण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
 
+    final nameController = TextEditingController(text: oldName ?? '');
     final amountController = TextEditingController(
       text: oldAmount == null ? '' : oldAmount.toString(),
     );
@@ -355,7 +419,6 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                     if (value == null || value.trim().isEmpty) {
                       return 'नाव टाका';
                     }
-
                     return null;
                   },
                 ),
@@ -366,7 +429,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                     decimal: true,
                   ),
                   decoration: const InputDecoration(
-                    labelText: 'रक्कम',
+                    labelText: 'जमा रक्कम',
                     border: OutlineInputBorder(),
                   ),
                   validator: (value) {
@@ -425,10 +488,10 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   }
 
   // ============================================================
-  // DELETE CONFIRMATION
+  // DELETE
   // ============================================================
 
-  Future<bool> confirmDelete() {
+  Future<bool> confirmDelete() async {
     return confirmRecordDelete(context, message: 'ही नोंद हटवायची आहे का?');
   }
 
@@ -436,26 +499,16 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   // SECTION TITLE
   // ============================================================
 
-  Widget sectionTitle(String title) {
-    final icon = switch (title) {
-      'प्रसाद देणगी' => Icons.volunteer_activism_outlined,
-      'प्रसाद साहित्य' => Icons.inventory_2_outlined,
-      _ => Icons.temple_hindu_outlined,
-    };
-
+  Widget sectionTitle(String title, IconData icon) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 14, 4, 9),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFFB94D00), size: 23),
-          const SizedBox(width: 10),
+          Icon(icon, color: const Color(0xFFB94D00)),
+          const SizedBox(width: 8),
           Text(
             title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF35291F),
-            ),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -463,7 +516,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   }
 
   // ============================================================
-  // PRASAD DENGANI TABLE
+  // RECORD ROW
   // ============================================================
 
   Widget _buildSwipeRecord({
@@ -474,9 +527,13 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     required VoidCallback onEdit,
     required Future<void> Function() onDelete,
   }) {
+    final canEdit = _authService.canEdit;
+    final canDelete = _authService.canDelete;
+
     return Dismissible(
       key: ValueKey(key),
-      direction: DismissDirection.endToStart,
+      direction:
+          canDelete ? DismissDirection.endToStart : DismissDirection.none,
       background: recordDeleteBackground(),
       confirmDismiss: (_) => confirmDelete(),
       onDismissed: (_) {
@@ -511,29 +568,34 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                 detail,
                 style: const TextStyle(color: Color(0xFF756A5D)),
               ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'बदला',
-                    icon: const Icon(Icons.edit, size: 20),
-                    onPressed: onEdit,
-                  ),
-                  IconButton(
-                    tooltip: 'हटवा',
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    onPressed: () async {
-                      if (!await confirmDelete()) return;
-                      if (!mounted) return;
-                      await deleteRecordAndRefresh(
-                        context,
-                        delete: onDelete,
-                        refresh: loadData,
-                      );
-                    },
-                  ),
-                ],
-              ),
+              trailing: (canEdit || canDelete)
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (canEdit)
+                          IconButton(
+                            tooltip: 'बदला',
+                            icon: const Icon(Icons.edit, size: 20),
+                            onPressed: onEdit,
+                          ),
+                        if (canDelete)
+                          IconButton(
+                            tooltip: 'हटवा',
+                            icon: const Icon(Icons.delete_outline,
+                                color: Colors.red),
+                            onPressed: () async {
+                              if (!await confirmDelete()) return;
+                              if (!mounted) return;
+                              await deleteRecordAndRefresh(
+                                context,
+                                delete: onDelete,
+                                refresh: loadData,
+                              );
+                            },
+                          ),
+                      ],
+                    )
+                  : null,
             ),
           ),
           const Divider(height: 1),
@@ -543,126 +605,106 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   }
 
   Widget buildPrasadDenganiTable() {
-    return Column(
-      children: [
-        if (prasadDengani.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(15),
-            child: Text('या वर्षासाठी कोणतीही नोंद उपलब्ध नाही.'),
-          )
-        else
-          ...List.generate(prasadDengani.length, (index) {
-            final row = prasadDengani[index];
-            final amount = (row['amount'] as num).toDouble();
-            return _buildSwipeRecord(
-              key: 'prasad-dengani-${row['id']}',
-              index: index,
-              name: row['name']?.toString() ?? '',
-              detail: money(amount),
-              onEdit: () => showPrasadDenganiDialog(
-                id: row['id'],
-                oldName: row['name'],
-                oldAmount: amount,
-              ),
-              onDelete: () async {
-                await db.deletePrasadDengani(row['id']);
-              },
-            );
-          }),
-        const Divider(),
-        Align(
-          alignment: Alignment.centerRight,
+    if (prasadDengani.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Center(
           child: Text(
-            'एकूण: ${money(prasadDenganiTotal)}',
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            'कोणतीही देणगी नोंद उपलब्ध नाही.',
+            style: TextStyle(color: Color(0xFF756A5D)),
           ),
         ),
-      ],
+      );
+    }
+
+    return Column(
+      children: List.generate(prasadDengani.length, (index) {
+        final row = prasadDengani[index];
+        final amount = (row['amount'] as num).toDouble();
+        return _buildSwipeRecord(
+          key: 'dengani-${row['id']}',
+          index: index,
+          name: row['name'].toString(),
+          detail: money(amount),
+          onEdit: () => showPrasadDenganiDialog(
+            id: row['id'],
+            oldName: row['name'],
+            oldAmount: amount,
+          ),
+          onDelete: () async => db.deletePrasadDengani(row['id']),
+        );
+      }),
     );
   }
-
-  // ============================================================
-  // PRASAD SAHITYA TABLE
-  // ============================================================
 
   Widget buildPrasadSahityaTable() {
-    return Column(
-      children: [
-        if (prasadSahitya.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(15),
-            child: Text('या वर्षासाठी कोणतीही नोंद उपलब्ध नाही.'),
-          )
-        else
-          ...List.generate(prasadSahitya.length, (index) {
-            final row = prasadSahitya[index];
-            return _buildSwipeRecord(
-              key: 'prasad-sahitya-${row['id']}',
-              index: index,
-              name: row['name']?.toString() ?? '',
-              detail: 'देणारे साहित्य: ${row['item'] ?? ''}',
-              onEdit: () => showPrasadSahityaDialog(
-                id: row['id'],
-                oldName: row['name'],
-                oldItem: row['item'],
-              ),
-              onDelete: () async {
-                await db.deletePrasadSahitya(row['id']);
-              },
-            );
-          }),
-      ],
-    );
-  }
-
-  // ============================================================
-  // AARTI VARGANI TABLE
-  // ============================================================
-
-  Widget buildAartiVarganiTable() {
-    return Column(
-      children: [
-        if (aartiVargani.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(15),
-            child: Text('या वर्षासाठी कोणतीही नोंद उपलब्ध नाही.'),
-          )
-        else
-          ...List.generate(aartiVargani.length, (index) {
-            final row = aartiVargani[index];
-            final amount = (row['amount'] as num).toDouble();
-            return _buildSwipeRecord(
-              key: 'aarti-vargani-${row['id']}',
-              index: index,
-              name: row['name']?.toString() ?? '',
-              detail: money(amount),
-              onEdit: () => showAartiVarganiDialog(
-                id: row['id'],
-                oldName: row['name'],
-                oldAmount: amount,
-              ),
-              onDelete: () async {
-                await db.deleteAartiVargani(row['id']);
-              },
-            );
-          }),
-        const Divider(),
-        Align(
-          alignment: Alignment.centerRight,
+    if (prasadSahitya.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Center(
           child: Text(
-            'एकूण: ${money(aartiVarganiTotal)}',
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            'कोणतीही साहित्य नोंद उपलब्ध नाही.',
+            style: TextStyle(color: Color(0xFF756A5D)),
           ),
         ),
-      ],
+      );
+    }
+
+    return Column(
+      children: List.generate(prasadSahitya.length, (index) {
+        final row = prasadSahitya[index];
+        return _buildSwipeRecord(
+          key: 'sahitya-${row['id']}',
+          index: index,
+          name: row['name'].toString(),
+          detail: row['item'].toString(),
+          onEdit: () => showPrasadSahityaDialog(
+            id: row['id'],
+            oldName: row['name'],
+            oldItem: row['item'],
+          ),
+          onDelete: () async => db.deletePrasadSahitya(row['id']),
+        );
+      }),
     );
   }
 
-  // ============================================================
-  // CARD
-  // ============================================================
+  Widget buildAartiVarganiTable() {
+    if (aartiVargani.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Center(
+          child: Text(
+            'कोणतीही आरती वर्गणी नोंद उपलब्ध नाही.',
+            style: TextStyle(color: Color(0xFF756A5D)),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: List.generate(aartiVargani.length, (index) {
+        final row = aartiVargani[index];
+        final amount = (row['amount'] as num).toDouble();
+        return _buildSwipeRecord(
+          key: 'aarti-${row['id']}',
+          index: index,
+          name: row['name'].toString(),
+          detail: money(amount),
+          onEdit: () => showAartiVarganiDialog(
+            id: row['id'],
+            oldName: row['name'],
+            oldAmount: amount,
+          ),
+          onDelete: () async => db.deleteAartiVargani(row['id']),
+        );
+      }),
+    );
+  }
 
   Widget sectionCard({required Widget child, required VoidCallback onAdd}) {
+    final canAdd = _authService.canAdd;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 20),
       child: Padding(
@@ -670,15 +712,17 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
         child: Column(
           children: [
             child,
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: onAdd,
-                icon: const Icon(Icons.add),
-                label: const Text('नवीन नोंद'),
+            if (canAdd) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: onAdd,
+                  icon: const Icon(Icons.add),
+                  label: const Text('नवीन नोंद'),
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -691,6 +735,9 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isOldKhajani = _authService.isOldKhajani;
+    final canModify = _authService.canModify;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('प्रसाद देणगी'),
@@ -709,87 +756,101 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // YEAR
+                    // Read-only notice for OLD_KHAJANI
+                    if (isOldKhajani && !canModify) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3E0),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFFB74D)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.visibility_outlined,
+                                color: Color(0xFFB94D00), size: 20),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'माजी खजानी (केवळ वाचन मोड) - नवीन देणगी नोंदवणे, बदलणे किंवा हटवणे बंद आहे.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFFE65100),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(12),
                         child: Row(
                           children: [
                             const Text(
-                              'वर्ष:',
+                              'वर्ष निवडा:',
                               style: TextStyle(
-                                fontSize: 17,
+                                fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(width: 15),
+                            const Spacer(),
                             DropdownButton<int>(
                               value: selectedYear,
-                              items: List.generate(11, (index) {
-                                final year = DateTime.now().year - 5 + index;
-
-                                return DropdownMenuItem<int>(
-                                  value: year,
-                                  child: Text('$year'),
+                              items: List.generate(10, (index) {
+                                final y = DateTime.now().year - index;
+                                return DropdownMenuItem(
+                                  value: y,
+                                  child: Text('$y'),
                                 );
                               }),
-                              onChanged: (value) async {
-                                if (value == null) return;
-
-                                setState(() {
-                                  selectedYear = value;
-                                });
-
-                                await loadData();
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setState(() {
+                                    selectedYear = val;
+                                  });
+                                  loadData();
+                                }
                               },
                             ),
                           ],
                         ),
                       ),
                     ),
+
                     const SizedBox(height: 12),
+
                     Row(
                       children: [
-                        _summaryTotal('प्रसाद देणगी', prasadDenganiTotal),
+                        _summaryTotal('प्रसाद देणगी एकूण', prasadDenganiTotal),
                         const SizedBox(width: 10),
-                        _summaryTotal('आरतीतील वर्गणी', aartiVarganiTotal),
+                        _summaryTotal('आरती वर्गणी एकूण', aartiVarganiTotal),
                       ],
                     ),
 
-                    // ------------------------------------------------
-                    // प्रसाद देणगी
-                    // ------------------------------------------------
-                    sectionTitle('प्रसाद देणगी'),
+                    const SizedBox(height: 16),
 
+                    sectionTitle('प्रसाद देणगी', Icons.volunteer_activism),
                     sectionCard(
                       child: buildPrasadDenganiTable(),
-                      onAdd: () {
-                        showPrasadDenganiDialog();
-                      },
+                      onAdd: () => showPrasadDenganiDialog(),
                     ),
 
-                    // ------------------------------------------------
-                    // प्रसाद साहित्य
-                    // ------------------------------------------------
-                    sectionTitle('प्रसाद साहित्य'),
-
+                    sectionTitle('प्रसाद साहित्य', Icons.inventory_2),
                     sectionCard(
                       child: buildPrasadSahityaTable(),
-                      onAdd: () {
-                        showPrasadSahityaDialog();
-                      },
+                      onAdd: () => showPrasadSahityaDialog(),
                     ),
 
-                    // ------------------------------------------------
-                    // आरतीतिल वर्गणी
-                    // ------------------------------------------------
-                    sectionTitle('आरतीतिल वर्गणी'),
-
+                    sectionTitle('आरतीतील वर्गणी', Icons.currency_rupee),
                     sectionCard(
                       child: buildAartiVarganiTable(),
-                      onAdd: () {
-                        showAartiVarganiDialog();
-                      },
+                      onAdd: () => showAartiVarganiDialog(),
                     ),
                   ],
                 ),

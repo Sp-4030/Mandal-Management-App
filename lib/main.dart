@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
-import 'screens/vargani_screen.dart';
-import 'screens/prasad_dengani_screen.dart';
-import 'screens/kharch_screen.dart';
-import 'screens/mahaprasad_kharch_screen.dart';
-import 'screens/settings_screen.dart';
 import 'database/database_helper.dart';
 import 'pdf/annual_report_pdf.dart';
 import 'screens/app_update_screen.dart';
+import 'screens/kharch_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/mahaprasad_kharch_screen.dart';
+import 'screens/prasad_dengani_screen.dart';
+import 'screens/settings_screen.dart';
+import 'screens/vargani_screen.dart';
+import 'services/auth_service.dart';
+import 'services/signaling_service.dart';
 import 'services/update_service.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
@@ -101,10 +104,12 @@ void main() {
 
 class HindviApp extends StatelessWidget {
   final bool checkUpdateOnStartup;
+  final Widget? initialHome;
 
   const HindviApp({
     super.key,
     this.checkUpdateOnStartup = true,
+    this.initialHome,
   });
 
   @override
@@ -113,7 +118,62 @@ class HindviApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'हिंदवी स्वराज्य',
       theme: _hindviTheme,
-      home: DashboardScreen(checkUpdateOnStartup: checkUpdateOnStartup),
+      home: initialHome ??
+          AuthGateScreen(checkUpdateOnStartup: checkUpdateOnStartup),
+    );
+  }
+}
+
+class AuthGateScreen extends StatefulWidget {
+  final bool checkUpdateOnStartup;
+
+  const AuthGateScreen({
+    super.key,
+    this.checkUpdateOnStartup = true,
+  });
+
+  @override
+  State<AuthGateScreen> createState() => _AuthGateScreenState();
+}
+
+class _AuthGateScreenState extends State<AuthGateScreen> {
+  late Future<void> _initSessionFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AuthService.instance.isLoggedIn) {
+      _initSessionFuture = Future.value();
+    } else {
+      _initSessionFuture = AuthService.instance.initSession();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (AuthService.instance.isLoggedIn) {
+      return DashboardScreen(
+        checkUpdateOnStartup: widget.checkUpdateOnStartup,
+      );
+    }
+
+    return FutureBuilder<void>(
+      future: _initSessionFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          if (AuthService.instance.isLoggedIn) {
+            return DashboardScreen(
+              checkUpdateOnStartup: widget.checkUpdateOnStartup,
+            );
+          } else {
+            return const KhajaniLoginScreen();
+          }
+        }
+        return const Scaffold(
+          backgroundColor: _warmPaper,
+          body: SizedBox.shrink(),
+        );
+      },
     );
   }
 }
@@ -166,6 +226,125 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
+  Future<void> _handleLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Text('लॉगआउट पुष्टी'),
+          content: const Text(
+            'तुम्हाला खरोखर खात्यातून लॉगआउट करायचे आहे का?\n\n'
+            'लॉगआउट केल्यावर पुन्हा नाव व पासवर्ड टाकून लॉगिन करावे लागेल.',
+            style: TextStyle(height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('रद्द करा'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('लॉगआउट करा'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    await AuthService.instance.logout();
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => const KhajaniLoginScreen(),
+      ),
+      (route) => false,
+    );
+  }
+
+  void _showServerStatusDialog() {
+    final signaling = SignalingService.instance;
+    final isOnline = signaling.isConnected;
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Icon(Icons.computer, color: isOnline ? Colors.green : Colors.red),
+              const SizedBox(width: 8),
+              Text(
+                isOnline ? 'Server is ON 🟢' : 'Server is OFF 🔴',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isOnline
+                    ? 'PC Signaling Server शी यशस्वीरीत्या जोडले गेले आहे.'
+                    : 'PC Signaling Server सध्या बंद किंवा ऑफलाइन आहे.',
+                style: const TextStyle(fontSize: 13, color: Color(0xFF756A5D)),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isOnline ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: isOnline ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.link, size: 16, color: Color(0xFF756A5D)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'URL: ${signaling.serverUrl}',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('बंद करा'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(dialogCtx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              },
+              style: FilledButton.styleFrom(backgroundColor: _saffron),
+              child: const Text('सेटिंग्ज बदला'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -186,83 +365,60 @@ class _DashboardScreenState extends State<DashboardScreen>
     required IconData icon,
     required VoidCallback onTap,
   }) {
-    var pressed = false;
-    return StatefulBuilder(
-      builder: (context, setTileState) => AnimatedScale(
-        scale: pressed ? 0.985 : 1,
-        duration: const Duration(milliseconds: 110),
-        child: TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0.94, end: 1),
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeOutCubic,
-          builder: (context, value, child) => Opacity(
-            opacity: value,
-            child: Transform.translate(
-              offset: Offset(0, 8 * (1 - value)),
-              child: child,
-            ),
-          ),
-          child: Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            child: InkWell(
-              onHighlightChanged: (value) {
-                if (pressed != value) setTileState(() => pressed = value);
-              },
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(18),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 16,
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF0E1),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: Row(
+                child: Icon(
+                  icon,
+                  size: 27,
+                  color: _deepSaffron,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF0E1),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(icon, size: 27, color: _deepSaffron),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF756A5D),
-                            ),
-                          ),
-                        ],
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
                       ),
                     ),
-                    const Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      size: 16,
-                      color: _deepSaffron,
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF756A5D),
+                        height: 1.3,
+                      ),
                     ),
                   ],
                 ),
               ),
-            ),
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: _deepSaffron,
+              ),
+            ],
           ),
         ),
       ),
@@ -271,6 +427,12 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   Widget build(BuildContext context) {
+    final auth = AuthService.instance;
+    final currentUser = auth.currentUser;
+    final isDeveloper = auth.isDeveloper;
+    final isLatest = auth.isLatestKhajani;
+    final isOld = auth.isOldKhajani;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -288,17 +450,65 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         centerTitle: true,
         actions: [
+          StreamBuilder<bool>(
+            stream: SignalingService.instance.isConnectedStream,
+            initialData: SignalingService.instance.isConnected,
+            builder: (context, snapshot) {
+              final isOnline = snapshot.data ?? false;
+              return Tooltip(
+                message: isOnline
+                    ? 'Server is ON 🟢 (PC सर्व्हर जोडलेला आहे)'
+                    : 'Server is OFF 🔴 (PC सर्व्हर बंद आहे)',
+                child: InkWell(
+                  onTap: _showServerStatusDialog,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isOnline
+                          ? const Color(0xFFE8F5E9)
+                          : const Color(0xFFFFEBEE),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isOnline
+                            ? const Color(0xFFA5D6A7)
+                            : const Color(0xFFEF9A9A),
+                      ),
+                    ),
+                    child: Text(
+                      isOnline ? 'Server is ON 🟢' : 'Server is OFF 🔴',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: isOnline
+                            ? const Color(0xFF1B5E20)
+                            : const Color(0xFFC62828),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
+            tooltip: 'सेटिंग्ज',
             onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => const SettingsScreen(),
                 ),
-              );
+              ).then((_) {
+                if (mounted) setState(() {});
+              });
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: 'लॉगआउट',
+            onPressed: _handleLogout,
           ),
         ],
       ),
@@ -309,6 +519,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             constraints: const BoxConstraints(maxWidth: 760),
             child: Column(
               children: [
+                // Top Mandal Banner
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -356,10 +567,90 @@ class _DashboardScreenState extends State<DashboardScreen>
                           color: Color(0xFFFFE6CF),
                         ),
                       ),
+                      if (currentUser != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isDeveloper
+                                    ? Icons.shield
+                                    : (isLatest
+                                        ? Icons.verified
+                                        : Icons.visibility_outlined),
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                isDeveloper
+                                    ? 'Developer (सर्वोच्च ॲडमिन)'
+                                    : '${currentUser.name} (${currentUser.marathiRole})',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
+
+                // Read-only notification banner for OLD_KHAJANI
+                if (isOld && !auth.canModify) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFFFB74D)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: Color(0xFFB94D00),
+                          size: 24,
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'आपण "माजी खजानी" म्हणून लॉग इन आहात. आपल्याला केवळ माहिती पाहण्याची व अहवाल PDF तयार करण्याची परवानगी आहे. नोंदी बदलणे बंद आहे.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF8E410C),
+                              height: 1.35,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
@@ -376,7 +667,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 dashboardButton(
                   context: context,
                   title: 'वर्गणी',
-                  subtitle: 'वर्गणीच्या जमा नोंदी आणि शिल्लक',
+                  subtitle: isOld
+                      ? 'वर्गणीच्या जमा नोंदी आणि शिल्लक (फक्त वाचन)'
+                      : 'वर्गणीच्या जमा नोंदी आणि शिल्लक',
                   icon: Icons.account_balance_wallet,
                   onTap: () {
                     Navigator.push(
@@ -394,7 +687,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 dashboardButton(
                   context: context,
                   title: 'प्रसाद देणगी',
-                  subtitle: 'देणगी आणि आरती वर्गणी व्यवस्थापन',
+                  subtitle: isOld
+                      ? 'देणगी आणि आरती वर्गणी माहिती (फक्त वाचन)'
+                      : 'देणगी आणि आरती वर्गणी व्यवस्थापन',
                   icon: Icons.volunteer_activism,
                   onTap: () {
                     Navigator.push(
@@ -412,7 +707,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 dashboardButton(
                   context: context,
                   title: 'प्रसाद साहित्य',
-                  subtitle: 'साहित्य देणगीच्या नोंदी',
+                  subtitle: isOld
+                      ? 'साहित्य देणगीच्या नोंदी (फक्त वाचन)'
+                      : 'साहित्य देणगीच्या नोंदी',
                   icon: Icons.inventory_2,
                   onTap: () {
                     Navigator.push(
@@ -430,7 +727,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 dashboardButton(
                   context: context,
                   title: 'मागील वर्षाचा खर्च',
-                  subtitle: 'वस्तू, खरेदीदार आणि एकूण खर्च',
+                  subtitle: isOld
+                      ? 'वस्तू, खरेदीदार आणि एकूण खर्च (फक्त वाचन)'
+                      : 'वस्तू, खरेदीदार आणि एकूण खर्च',
                   icon: Icons.receipt_long,
                   onTap: () {
                     Navigator.push(
@@ -448,7 +747,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                 dashboardButton(
                   context: context,
                   title: 'महाप्रसाद बाजार',
-                  subtitle: 'बाजारातील वस्तू आणि खर्च',
+                  subtitle: isOld
+                      ? 'बाजारातील वस्तू आणि खर्च (फक्त वाचन)'
+                      : 'बाजारातील वस्तू आणि खर्च',
                   icon: Icons.shopping_cart,
                   onTap: () {
                     Navigator.push(
@@ -466,6 +767,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                   subtitle: 'PDF तयार करा किंवा पूर्वावलोकन पाहा',
                   icon: Icons.picture_as_pdf,
                   onTap: () {
+                    if (!auth.canPdf) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'वार्षिक अहवाल PDF पाहण्याची किंवा तयार करण्याची परवानगी नाही. कृपया Developer शी संपर्क साधा.',
+                          ),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                      return;
+                    }
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -517,106 +829,130 @@ class _AnnualReportScreenState extends State<AnnualReportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('वार्षिक अहवाल')),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+      appBar: AppBar(
+        title: const Text('वार्षिक अहवाल'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 68,
-                        height: 68,
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFF0E6D9)),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 70,
+                        height: 70,
                         decoration: BoxDecoration(
                           color: const Color(0xFFFFF0E1),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: const Icon(
-                          Icons.description_outlined,
+                          Icons.picture_as_pdf,
+                          size: 38,
                           color: _deepSaffron,
-                          size: 34,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'वार्षिक अहवाल',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'अहवालासाठी वर्ष निवडा',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Color(0xFF756A5D)),
-                    ),
-                    const SizedBox(height: 22),
-                    DropdownButtonFormField<int>(
-                      initialValue: _selectedYear,
-                      decoration: const InputDecoration(
-                        labelText: 'वर्ष',
-                        prefixIcon: Icon(Icons.calendar_month_outlined),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'वार्षिक हिशोब अहवाल',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: _ink,
+                        ),
                       ),
-                      items: List.generate(11, (index) {
-                        final year = DateTime.now().year - 5 + index;
-                        return DropdownMenuItem<int>(
-                          value: year,
-                          child: Text('$year'),
-                        );
-                      }),
-                      onChanged: _isBusy
-                          ? null
-                          : (year) {
-                              if (year != null) {
-                                setState(() => _selectedYear = year);
+                      const SizedBox(height: 6),
+                      const Text(
+                        'निवडलेल्या वर्षाचा संपूर्ण जमा-खर्च आणि शिल्लक अहवाल तयार करा.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF756A5D),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Year selection dropdown
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'वर्ष निवडा: ',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: _ink,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          DropdownButton<int>(
+                            value: _selectedYear,
+                            dropdownColor: Colors.white,
+                            items: List.generate(10, (index) {
+                              final year = DateTime.now().year - index + 1;
+                              return DropdownMenuItem(
+                                value: year,
+                                child: Text(
+                                  '$year',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              );
+                            }),
+                            onChanged: (val) {
+                              if (val != null) {
+                                setState(() => _selectedYear = val);
                               }
                             },
-                    ),
-                    const SizedBox(height: 22),
-                    if (_isBusy)
-                      const Center(child: CircularProgressIndicator())
-                    else
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final createButton = FilledButton.icon(
-                            onPressed: () => _openReport(preview: false),
-                            icon: const Icon(Icons.picture_as_pdf_outlined),
-                            label: const Text('PDF तयार करा'),
-                          );
-                          final previewButton = OutlinedButton.icon(
-                            onPressed: () => _openReport(preview: true),
-                            icon: const Icon(Icons.visibility_outlined),
-                            label: const Text('PDF Preview'),
-                          );
-                          if (constraints.maxWidth < 520) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                createButton,
-                                const SizedBox(height: 10),
-                                previewButton,
-                              ],
-                            );
-                          }
-                          return Row(
-                            children: [
-                              Expanded(child: createButton),
-                              const SizedBox(width: 12),
-                              Expanded(child: previewButton),
-                            ],
-                          );
-                        },
+                          ),
+                        ],
                       ),
-                  ],
+                      const SizedBox(height: 24),
+
+                      if (_isBusy)
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: CircularProgressIndicator(color: _saffron),
+                        )
+                      else ...[
+                        FilledButton.icon(
+                          onPressed: () => _openReport(preview: true),
+                          icon: const Icon(Icons.remove_red_eye_outlined),
+                          label: const Text('पूर्वावलोकन पाहा (Preview)'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _saffron,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(double.infinity, 50),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: () => _openReport(preview: false),
+                          icon: const Icon(Icons.print_outlined),
+                          label: const Text('प्रिंट किंवा सेव्ह करा'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _deepSaffron,
+                            side: const BorderSide(color: _deepSaffron),
+                            minimumSize: const Size(double.infinity, 50),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ),

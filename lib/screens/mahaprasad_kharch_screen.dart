@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
 import '../models/mahaprasad_kharch_model.dart';
+import '../services/auth_service.dart';
 import '../utils/record_delete.dart';
 
 class MahaprasadKharchScreen extends StatefulWidget {
-  const MahaprasadKharchScreen({super.key});
+  final bool initialLoading;
+  const MahaprasadKharchScreen({super.key, this.initialLoading = true});
 
   @override
   State<MahaprasadKharchScreen> createState() =>
@@ -15,6 +17,7 @@ class MahaprasadKharchScreen extends StatefulWidget {
 class _MahaprasadKharchScreenState
     extends State<MahaprasadKharchScreen> {
   final DatabaseHelper _db = DatabaseHelper.instance;
+  final AuthService _authService = AuthService.instance;
 
   List<MahaprasadKharch> _items = [];
 
@@ -22,15 +25,17 @@ class _MahaprasadKharchScreenState
 
   double total = 0.0;
 
-  bool isLoading = true;
+  late bool isLoading;
 
   @override
   void initState() {
     super.initState();
 
     selectedYear = DateTime.now().year;
-
-    _loadData();
+    isLoading = widget.initialLoading;
+    if (widget.initialLoading) {
+      _loadData();
+    }
   }
 
   // ============================================================
@@ -42,25 +47,28 @@ class _MahaprasadKharchScreenState
       isLoading = true;
     });
 
-    final data =
-        await _db.getMahaprasadKharch(selectedYear);
+    try {
+      final data = await _db.getMahaprasadKharch(selectedYear);
+      final totalAmount = await _db.getMahaprasadKharchTotal(selectedYear);
 
-    final totalAmount =
-        await _db.getMahaprasadKharchTotal(
-      selectedYear,
-    );
+      if (!mounted) return;
+
+      setState(() {
+        _items = data
+            .map(
+              (map) => MahaprasadKharch.fromMap(map),
+            )
+            .toList();
+
+        total = totalAmount;
+        isLoading = false;
+      });
+      return;
+    } catch (_) {}
 
     if (!mounted) return;
 
     setState(() {
-      _items = data
-          .map(
-            (map) => MahaprasadKharch.fromMap(map),
-          )
-          .toList();
-
-      total = totalAmount;
-
       isLoading = false;
     });
   }
@@ -72,18 +80,42 @@ class _MahaprasadKharchScreenState
   Future<void> _showAddEditDialog({
     MahaprasadKharch? item,
   }) async {
-    final itemController = TextEditingController(
+    if (item == null && !_authService.canAdd) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास खर्च जोडण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (item != null && !_authService.canEdit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'माजी खजानी किंवा विना-परवानगी वापरकर्त्यास खर्च बदलण्याची परवानगी नाही.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final itemController =
+        TextEditingController(
       text: item?.item ?? '',
     );
 
-    final buyerController = TextEditingController(
+    final buyerController =
+        TextEditingController(
       text: item?.buyerName ?? '',
     );
 
-    final amountController = TextEditingController(
-      text: item != null
-          ? item.amount.toStringAsFixed(0)
-          : '',
+    final amountController =
+        TextEditingController(
+      text: item == null
+          ? ''
+          : item.amount.toString(),
     );
 
     final formKey = GlobalKey<FormState>();
@@ -94,143 +126,109 @@ class _MahaprasadKharchScreenState
         return AlertDialog(
           title: Text(
             item == null
-                ? 'महाप्रसाद बाजार खर्च भरा'
-                : 'महाप्रसाद बाजार खर्च बदला',
+                ? 'नवीन खरेदी नोंद'
+                : 'नोंद बदला',
           ),
           content: Form(
             key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ==================================================
-                  // साहित्य
-                  // ==================================================
-
-                  TextFormField(
-                    controller: itemController,
-                    decoration: const InputDecoration(
-                      labelText: 'साहित्य',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) {
-                      if (value == null ||
-                          value.trim().isEmpty) {
-                        return 'साहित्य भरा';
-                      }
-
-                      return null;
-                    },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: itemController,
+                  decoration: const InputDecoration(
+                    labelText: 'वस्तूचे नाव',
                   ),
-
-                  const SizedBox(height: 12),
-
-                  // ==================================================
-                  // खरेदीदाराचे नाव
-                  // ==================================================
-
-                  TextFormField(
-                    controller: buyerController,
-                    decoration: const InputDecoration(
-                      labelText: 'वस्तू खरेदीदारचे नावे',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) {
-                      if (value == null ||
-                          value.trim().isEmpty) {
-                        return 'नाव भरा';
-                      }
-
-                      return null;
-                    },
+                  validator: (value) {
+                    if (value == null ||
+                        value.trim().isEmpty) {
+                      return 'कृपया वस्तूचे नाव टाका';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: buyerController,
+                  decoration: const InputDecoration(
+                    labelText: 'खरेदीदाराचे नाव',
                   ),
-
-                  const SizedBox(height: 12),
-
-                  // ==================================================
-                  // खर्च
-                  // ==================================================
-
-                  TextFormField(
-                    controller: amountController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'खर्च',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) {
-                      if (value == null ||
-                          value.trim().isEmpty) {
-                        return 'खर्चाची रक्कम भरा';
-                      }
-
-                      final amount =
-                          double.tryParse(
-                        value.trim(),
-                      );
-
-                      if (amount == null) {
-                        return 'योग्य रक्कम भरा';
-                      }
-
-                      if (amount < 0) {
-                        return 'रक्कम चुकीची आहे';
-                      }
-
-                      return null;
-                    },
+                  validator: (value) {
+                    if (value == null ||
+                        value.trim().isEmpty) {
+                      return 'कृपया खरेदीदाराचे नाव टाका';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: amountController,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(
+                    decimal: true,
                   ),
-                ],
-              ),
+                  decoration: const InputDecoration(
+                    labelText: 'रक्कम',
+                    prefixText: '₹ ',
+                  ),
+                  validator: (value) {
+                    if (value == null ||
+                        value.trim().isEmpty) {
+                      return 'कृपया रक्कम टाका';
+                    }
+
+                    final parsed =
+                        double.tryParse(
+                      value.trim(),
+                    );
+
+                    if (parsed == null ||
+                        parsed <= 0) {
+                      return 'कृपया योग्य रक्कम टाका';
+                    }
+
+                    return null;
+                  },
+                ),
+              ],
             ),
           ),
           actions: [
-            // ======================================================
-            // CANCEL
-            // ======================================================
-
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
               },
-              child: const Text('रद्द करा'),
+              child: const Text('रद्द'),
             ),
-
-            // ======================================================
-            // SAVE
-            // ======================================================
-
-            ElevatedButton(
+            FilledButton(
               onPressed: () async {
                 if (!formKey.currentState!.validate()) {
                   return;
                 }
 
-                final amount =
-                    double.parse(
-                  amountController.text.trim(),
-                );
-
-                final data = MahaprasadKharch(
+                final newItem =
+                    MahaprasadKharch(
                   id: item?.id,
                   item: itemController.text.trim(),
                   buyerName:
                       buyerController.text.trim(),
-                  amount: amount,
+                  amount: double.parse(
+                    amountController.text.trim(),
+                  ),
                   year: selectedYear,
                 );
 
                 if (item == null) {
-                  await _db.insertMahaprasadKharch(
-                    data.toMap(),
+                  await _db
+                      .insertMahaprasadKharch(
+                    newItem.toMap(),
                   );
                 } else {
-                  await _db.updateMahaprasadKharch(
-                    data.id!,
-                    data.toMap(),
+                  await _db
+                      .updateMahaprasadKharch(
+                    item.id!,
+                    newItem.toMap(),
                   );
                 }
 
@@ -238,22 +236,78 @@ class _MahaprasadKharchScreenState
 
                 Navigator.pop(context);
 
-                await _loadData();
+                _loadData();
               },
-              child: Text(
-                item == null
-                    ? 'जतन करा'
-                    : 'बदल जतन करा',
-              ),
+              child: const Text('जतन करा'),
             ),
           ],
         );
       },
     );
+  }
 
-    itemController.dispose();
-    buyerController.dispose();
-    amountController.dispose();
+  // ============================================================
+  // TOTAL CARD
+  // ============================================================
+
+  Widget _buildTotalCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 18,
+        vertical: 18,
+      ),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFFFFF0E1),
+            Color(0xFFFFDFBD),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius:
+            BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFF2D1AE),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'महाप्रसाद एकूण खर्च',
+            style: TextStyle(
+              fontSize: 14,
+              color: Color(0xFFB94D00),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 5),
+          TweenAnimationBuilder<double>(
+            tween: Tween(
+              begin: 0,
+              end: total,
+            ),
+            duration: const Duration(
+              milliseconds: 400,
+            ),
+            curve: Curves.easeOutCubic,
+            builder: (context, value, child) {
+              return Text(
+                '₹${value.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF25231F),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   // ============================================================
@@ -261,26 +315,25 @@ class _MahaprasadKharchScreenState
   // ============================================================
 
   Widget _buildYearDropdown() {
-    final currentYear = DateTime.now().year;
-
-    final years = List.generate(
-      6,
-      (index) => currentYear - index,
-    );
-
     return DropdownButton<int>(
       value: selectedYear,
-      items: years.map((year) {
-        return DropdownMenuItem<int>(
-          value: year,
-          child: Text('$year'),
-        );
-      }).toList(),
-      onChanged: (value) {
-        if (value == null) return;
+      items: List.generate(
+        11,
+        (index) {
+          final year =
+              DateTime.now().year - 5 + index;
+
+          return DropdownMenuItem<int>(
+            value: year,
+            child: Text('$year'),
+          );
+        },
+      ),
+      onChanged: (year) {
+        if (year == null) return;
 
         setState(() {
-          selectedYear = value;
+          selectedYear = year;
         });
 
         _loadData();
@@ -289,14 +342,14 @@ class _MahaprasadKharchScreenState
   }
 
   // ============================================================
-  // TABLE HEADER
+  // HEADER
   // ============================================================
 
   Widget _buildHeader() {
     return const Padding(
       padding: EdgeInsets.fromLTRB(
         4,
-        8,
+        2,
         4,
         10,
       ),
@@ -327,20 +380,16 @@ class _MahaprasadKharchScreenState
     MahaprasadKharch item,
     int index,
   ) {
+    final canEdit = _authService.canEdit;
+    final canDelete = _authService.canDelete;
+
     return TweenAnimationBuilder<double>(
-      tween: Tween(
-        begin: 0.95,
-        end: 1,
-      ),
-      duration: const Duration(
-        milliseconds: 280,
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(
+        milliseconds: 180 + (index * 20),
       ),
       curve: Curves.easeOutCubic,
-      builder: (
-        context,
-        value,
-        child,
-      ) {
+      builder: (context, value, child) {
         return Opacity(
           opacity: value,
           child: Transform.translate(
@@ -359,10 +408,11 @@ class _MahaprasadKharchScreenState
         child: InkWell(
           borderRadius:
               BorderRadius.circular(18),
-          onTap: () =>
-              _showAddEditDialog(
-            item: item,
-          ),
+          onTap: canEdit
+              ? () => _showAddEditDialog(
+                    item: item,
+                  )
+              : null,
           child: Padding(
             padding:
                 const EdgeInsets.symmetric(
@@ -371,10 +421,6 @@ class _MahaprasadKharchScreenState
             ),
             child: Row(
               children: [
-                // ==================================================
-                // NUMBER
-                // ==================================================
-
                 CircleAvatar(
                   radius: 19,
                   backgroundColor:
@@ -385,13 +431,7 @@ class _MahaprasadKharchScreenState
                     '${index + 1}',
                   ),
                 ),
-
                 const SizedBox(width: 12),
-
-                // ==================================================
-                // ITEM DETAILS
-                // ==================================================
-
                 Expanded(
                   child: Column(
                     crossAxisAlignment:
@@ -425,16 +465,10 @@ class _MahaprasadKharchScreenState
                     ],
                   ),
                 ),
-
                 const SizedBox(width: 8),
-
-                // ==================================================
-                // AMOUNT + EDIT + DELETE
-                // ==================================================
-
                 Column(
                   crossAxisAlignment:
-                      CrossAxisAlignment.end,
+                  CrossAxisAlignment.end,
                   children: [
                     Text(
                       '₹${item.amount.toStringAsFixed(0)}',
@@ -448,69 +482,103 @@ class _MahaprasadKharchScreenState
                             FontWeight.w800,
                       ),
                     ),
+                    if (canEdit || canDelete)
+                      Row(
+                        mainAxisSize:
+                            MainAxisSize.min,
+                        children: [
+                          if (canEdit)
+                            IconButton(
+                              tooltip: 'बदला',
+                              visualDensity:
+                                  VisualDensity.compact,
+                              icon: const Icon(
+                                Icons.edit_outlined,
+                              ),
+                              onPressed: () =>
+                                  _showAddEditDialog(
+                                item: item,
+                              ),
+                            ),
+                          if (canDelete)
+                            IconButton(
+                              tooltip: 'हटवा',
+                              visualDensity:
+                                  VisualDensity.compact,
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.red,
+                              ),
+                              onPressed: () async {
+                                final confirmed =
+                                    await confirmRecordDelete(
+                                  context,
+                                  message:
+                                      'ही नोंद हटवायची आहे का?',
+                                );
+                                if (!confirmed) return;
+                                if (!mounted) return;
 
-                    Row(
-                      mainAxisSize:
-                          MainAxisSize.min,
-                      children: [
-                        // ==================================================
-                        // EDIT BUTTON
-                        // ==================================================
-
-                        IconButton(
-                          tooltip: 'बदला',
-                          visualDensity:
-                              VisualDensity.compact,
-                          icon: const Icon(
-                            Icons.edit_outlined,
-                          ),
-                          onPressed: () =>
-                              _showAddEditDialog(
-                            item: item,
-                          ),
-                        ),
-
-                        // ==================================================
-                        // DELETE BUTTON
-                        // ==================================================
-
-                        IconButton(
-                          tooltip: 'हटवा',
-                          visualDensity:
-                              VisualDensity.compact,
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            color:
-                                Color(0xFFD32F2F),
-                          ),
-                          onPressed: () async {
-                            final confirmed =
-                                await confirmRecordDelete(
-                              context,
-                              message:
-                                  'ही नोंद हटवायची आहे का?',
-                            );
-
-                            if (!confirmed) {
-                              return;
-                            }
-
-                            await _db
-                                .deleteMahaprasadKharch(
-                              item.id!,
-                            );
-
-                            await _loadData();
-                          },
-                        ),
-                      ],
-                    ),
+                                await deleteRecordAndRefresh(
+                                  context,
+                                  delete: () async {
+                                    await _db
+                                        .deleteMahaprasadKharch(
+                                      item.id!,
+                                    );
+                                  },
+                                  refresh:
+                                      _loadData,
+                                );
+                              },
+                            ),
+                        ],
+                      ),
                   ],
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // EMPTY VIEW
+  // ============================================================
+
+  Widget _buildEmpty() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 20,
+        vertical: 36,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius:
+            BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFF0E6D9),
+        ),
+      ),
+      child: const Column(
+        children: [
+          Icon(
+            Icons.shopping_bag_outlined,
+            size: 34,
+            color: Color(0xFFB94D00),
+          ),
+          SizedBox(height: 10),
+          Text(
+            'या वर्षासाठी कोणतीही खरेदी नोंद उपलब्ध नाही.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFF756A5D),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -523,6 +591,11 @@ class _MahaprasadKharchScreenState
   Widget build(
     BuildContext context,
   ) {
+    final canAdd = _authService.canAdd;
+    final canDelete = _authService.canDelete;
+    final canModify = _authService.canModify;
+    final isOldKhajani = _authService.isOldKhajani;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -543,16 +616,17 @@ class _MahaprasadKharchScreenState
       // ADD BUTTON
       // ==========================================================
 
-      floatingActionButton:
-          FloatingActionButton.extended(
-        onPressed: () {
-          _showAddEditDialog();
-        },
-        icon: const Icon(Icons.add),
-        label: const Text(
-          'नवीन खर्च',
-        ),
-      ),
+      floatingActionButton: canAdd
+          ? FloatingActionButton.extended(
+              onPressed: () {
+                _showAddEditDialog();
+              },
+              icon: const Icon(Icons.add),
+              label: const Text(
+                'नवीन खर्च',
+              ),
+            )
+          : null,
 
       // ==========================================================
       // BODY
@@ -569,147 +643,90 @@ class _MahaprasadKharchScreenState
                 physics:
                     const AlwaysScrollableScrollPhysics(),
                 padding:
-                    const EdgeInsets.all(12),
+                    const EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  90,
+                ),
                 child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
                   children: [
-                    // ==================================================
-                    // YEAR
-                    // ==================================================
-
-                    Row(
-                      children: [
-                        const Text(
-                          'वर्ष : ',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight:
-                                FontWeight.bold,
-                          ),
+                    // Read-only notice for OLD_KHAJANI
+                    if (isOldKhajani && !canModify) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3E0),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFFB74D)),
                         ),
-                        _buildYearDropdown(),
-                      ],
-                    ),
-
-                    const SizedBox(
-                      height: 12,
-                    ),
-
-                    // ==================================================
-                    // TOTAL
-                    // ==================================================
+                        child: const Row(
+                          children: [
+                            Icon(Icons.visibility_outlined,
+                                color: Color(0xFFB94D00), size: 20),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'माजी खजानी (केवळ वाचन मोड) - नवीन खर्च नोंदवणे, बदलणे किंवा हटवणे बंद आहे.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFFE65100),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
 
                     Card(
-                      elevation: 2,
                       child: Padding(
                         padding:
-                            const EdgeInsets.all(
-                          15,
+                            const EdgeInsets
+                                .symmetric(
+                          horizontal: 16,
+                          vertical: 12,
                         ),
                         child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment
-                                  .spaceBetween,
                           children: [
+                            const Icon(
+                              Icons
+                                  .calendar_month,
+                              color: Color(
+                                  0xFFB94D00),
+                            ),
+                            const SizedBox(
+                              width: 12,
+                            ),
                             const Text(
-                              'एकूण खर्च',
-                              style:
-                                  TextStyle(
+                              'वर्ष निवडा: ',
+                              style: TextStyle(
                                 fontSize: 16,
                                 fontWeight:
-                                    FontWeight.w700,
-                                color:
-                                    Color(0xFFB94D00),
+                                    FontWeight
+                                        .w600,
                               ),
                             ),
-                            TweenAnimationBuilder<
-                                double>(
-                              tween: Tween(
-                                begin: 0,
-                                end: total,
-                              ),
-                              duration:
-                                  const Duration(
-                                milliseconds: 420,
-                              ),
-                              curve:
-                                  Curves.easeOutCubic,
-                              builder: (
-                                context,
-                                amount,
-                                child,
-                              ) {
-                                return Text(
-                                  '₹${amount.toStringAsFixed(0)}',
-                                  textAlign:
-                                      TextAlign.right,
-                                  style:
-                                      const TextStyle(
-                                    fontSize: 22,
-                                    fontWeight:
-                                        FontWeight.w800,
-                                    color:
-                                        Color(0xFF25231F),
-                                  ),
-                                );
-                              },
-                            ),
+                            const Spacer(),
+                            _buildYearDropdown(),
                           ],
                         ),
                       ),
                     ),
 
-                    const SizedBox(
-                      height: 15,
-                    ),
+                    const SizedBox(height: 12),
 
-                    // ==================================================
-                    // TABLE HEADER
-                    // ==================================================
+                    _buildTotalCard(),
+
+                    const SizedBox(height: 16),
 
                     _buildHeader(),
 
-                    // ==================================================
-                    // DATA
-                    // ==================================================
-
                     if (_items.isEmpty)
-                      Container(
-                        width:
-                            double.infinity,
-                        padding:
-                            const EdgeInsets
-                                .all(30),
-                        decoration:
-                            const BoxDecoration(
-                          color: Colors.white,
-                          borderRadius:
-                              BorderRadius.all(
-                            Radius.circular(18),
-                          ),
-                        ),
-                        child:
-                            const Column(
-                          children: [
-                            Icon(
-                              Icons
-                                  .shopping_basket_outlined,
-                              color:
-                                  Color(0xFFB94D00),
-                              size: 32,
-                            ),
-                            SizedBox(
-                              height: 10,
-                            ),
-                            Text(
-                              'या वर्षासाठी कोणताही खर्च उपलब्ध नाही.',
-                              textAlign:
-                                  TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      )
+                      _buildEmpty()
                     else
                       ..._items
                           .asMap()
@@ -720,27 +737,18 @@ class _MahaprasadKharchScreenState
                             key: ValueKey(
                               entry.value.id,
                             ),
-
-                            // Swipe left only.
-                            direction:
-                                DismissDirection
-                                    .endToStart,
-
-                            // Swipe background.
+                            direction: canDelete
+                                ? DismissDirection.endToStart
+                                : DismissDirection.none,
                             background:
                                 recordDeleteBackground(),
-
-                            // Confirmation before
-                            // swipe delete.
                             confirmDismiss:
                                 (_) =>
                                     confirmRecordDelete(
-                              context,
-                              message:
-                                  'ही नोंद हटवायची आहे का?',
-                            ),
-
-                            // Delete from database.
+                                context,
+                                message:
+                                    'ही नोंद हटवायची आहे का?',
+                              ),
                             onDismissed: (_) {
                               deleteRecordAndRefresh(
                                 context,
@@ -754,8 +762,6 @@ class _MahaprasadKharchScreenState
                                     _loadData,
                               );
                             },
-
-                            // Actual row.
                             child: _buildRow(
                               entry.value,
                               entry.key,

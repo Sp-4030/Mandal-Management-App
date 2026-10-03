@@ -471,7 +471,7 @@ class _AppUpdateScreenState extends State<AppUpdateScreen>
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'Current Version (सध्याची आवृत्ती)',
+                        'Current Version',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -713,7 +713,7 @@ class _AppUpdateScreenState extends State<AppUpdateScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Current Version (सध्याची आवृत्ती)',
+                      'Current Version',
                       style: TextStyle(fontSize: 12, color: Color(0xFF756A5D)),
                     ),
                     const SizedBox(height: 2),

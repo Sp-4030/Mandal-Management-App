@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
+import '../services/auth_service.dart';
 import '../utils/record_delete.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
@@ -16,6 +17,7 @@ class VarganiScreen extends StatefulWidget {
 
 class _VarganiScreenState extends State<VarganiScreen> {
   final DatabaseHelper db = DatabaseHelper.instance;
+  final AuthService _authService = AuthService.instance;
 
   final TextEditingController nameController = TextEditingController();
   final TextEditingController amountController = TextEditingController();
@@ -33,6 +35,15 @@ class _VarganiScreenState extends State<VarganiScreen> {
   void initState() {
     super.initState();
     loadData();
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    amountController.dispose();
+    previousBalanceController.dispose();
+    searchController.dispose();
+    super.dispose();
   }
 
   // ============================================================
@@ -101,6 +112,11 @@ class _VarganiScreenState extends State<VarganiScreen> {
   // ============================================================
 
   Future<void> savePreviousBalance() async {
+    if (!_authService.canEdit) {
+      showMessage('माजी खजानी किंवा विना-परवानगी वापरकर्त्यास शिल्लक रक्कम बदलण्याची परवानगी नाही.');
+      return;
+    }
+
     final text = previousBalanceController.text.trim();
 
     if (text.isEmpty) {
@@ -136,10 +152,27 @@ class _VarganiScreenState extends State<VarganiScreen> {
       barrierDismissible: false,
       builder: (dialogCtx) {
         return AlertDialog(
-          title: const Text('समान नाव आढळले'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.info_outline, color: _deepSaffron),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'समान नाव आढळले',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
           content: const Text(
-            'या नावाची व्यक्ती आधीपासून या वर्षाच्या वर्गणीमध्ये नोंदवलेली आहे.\n\n'
-            'ही वेगळी व्यक्ती असल्यास "होय, वेगळी व्यक्ती" निवडा.',
+            'या वर्षात या नावावर आधीच नोंद आहे. तरीही ही नवीन नोंद जोडायची आहे का?\n\n'
+            'होय दाबल्यास ही नवीन नोंद स्वतंत्रपणे जमा केली जाईल.',
             style: TextStyle(height: 1.4),
           ),
           actions: [
@@ -150,10 +183,10 @@ class _VarganiScreenState extends State<VarganiScreen> {
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogCtx, true),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _deepSaffron,
+                backgroundColor: _saffron,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('होय, वेगळी व्यक्ती'),
+              child: const Text('होय, जोडा'),
             ),
           ],
         );
@@ -167,6 +200,11 @@ class _VarganiScreenState extends State<VarganiScreen> {
   // ============================================================
 
   Future<void> addVargani(BuildContext dialogContext) async {
+    if (!_authService.canAdd) {
+      showMessage('माजी खजानी किंवा विना-परवानगी वापरकर्त्यास वर्गणी जोडण्याची परवानगी नाही.');
+      return;
+    }
+
     final name = _normalizeText(nameController.text);
     final amountText = amountController.text.trim();
 
@@ -200,7 +238,6 @@ class _VarganiScreenState extends State<VarganiScreen> {
       final confirmed =
           await _showSameNameConfirmationDialog(dialogContext);
       if (!confirmed) {
-        // User cancelled -> Keep Add dialog open
         return;
       }
     }
@@ -225,6 +262,11 @@ class _VarganiScreenState extends State<VarganiScreen> {
   // ============================================================
 
   Future<void> deleteVargani(int id) async {
+    if (!_authService.canDelete) {
+      showMessage('माजी खजानी किंवा विना-परवानगी वापरकर्त्यास वर्गणी हटवण्याची परवानगी नाही.');
+      return;
+    }
+
     final confirmed = await confirmRecordDelete(
       context,
       message: 'ही वर्गणीची नोंद हटवायची आहे का?',
@@ -246,6 +288,11 @@ class _VarganiScreenState extends State<VarganiScreen> {
   // ============================================================
 
   Future<void> editVargani(Map<String, dynamic> item) async {
+    if (!_authService.canEdit) {
+      showMessage('माजी खजानी किंवा विना-परवानगी वापरकर्त्यास वर्गणी बदलण्याची परवानगी नाही.');
+      return;
+    }
+
     nameController.text = item['name'].toString();
     amountController.text = item['amount'].toString();
     final int itemId = item['id'];
@@ -325,7 +372,6 @@ class _VarganiScreenState extends State<VarganiScreen> {
                   final confirmed =
                       await _showSameNameConfirmationDialog(dialogContext);
                   if (!confirmed) {
-                    // User cancelled -> Keep Edit dialog open
                     return;
                   }
                 }
@@ -357,6 +403,11 @@ class _VarganiScreenState extends State<VarganiScreen> {
   // ============================================================
 
   void showAddDialog() {
+    if (!_authService.canAdd) {
+      showMessage('माजी खजानी किंवा विना-परवानगी वापरकर्त्यास वर्गणी जोडण्याची परवानगी नाही.');
+      return;
+    }
+
     nameController.clear();
     amountController.clear();
 
@@ -406,93 +457,125 @@ class _VarganiScreenState extends State<VarganiScreen> {
   }
 
   // ============================================================
-  // MESSAGE
+  // SNACKBAR MESSAGE
   // ============================================================
 
-  void showMessage(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  void showMessage(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
+    );
   }
 
   // ============================================================
-  // DISPOSE
-  // ============================================================
-
-  @override
-  void dispose() {
-    nameController.dispose();
-    amountController.dispose();
-    previousBalanceController.dispose();
-    searchController.dispose();
-
-    super.dispose();
-  }
-
-  // ============================================================
-  // UI
+  // UI BUILD
   // ============================================================
 
   @override
   Widget build(BuildContext context) {
     final displayedList = filteredVarganiList;
+    final canModify = _authService.canModify;
+    final canAdd = _authService.canAdd;
+    final canEdit = _authService.canEdit;
+    final canDelete = _authService.canDelete;
+    final canSearch = _authService.canSearch;
+    final isOldKhajani = _authService.isOldKhajani;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('वर्गणी'),
+        title: const Text('वर्गणी व्यवस्थापन'),
         actions: [
           IconButton(
-            tooltip: 'पुन्हा लोड करा',
-            onPressed: loadData,
             icon: const Icon(Icons.refresh),
+            onPressed: loadData,
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: showAddDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('नवीन वर्गणी'),
-      ),
+      floatingActionButton: canAdd
+          ? FloatingActionButton.extended(
+              onPressed: showAddDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('नवीन वर्गणी'),
+            )
+          : null,
       body: RefreshIndicator(
         onRefresh: loadData,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 92),
           children: [
-            // 1. Year Dropdown Card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
+            // Read-Only Warning Banner for OLD_KHAJANI
+            if (isOldKhajani && !canModify) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3E0),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFFB74D)),
                 ),
-                child: Row(
+                child: const Row(
                   children: [
-                    const Icon(Icons.calendar_month, color: _saffron),
-                    const SizedBox(width: 12),
-                    const Expanded(
+                    Icon(Icons.visibility_outlined,
+                        color: _deepSaffron, size: 20),
+                    SizedBox(width: 10),
+                    Expanded(
                       child: Text(
-                        'वर्ष',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                        'माजी खजानी (केवळ वाचन मोड) - नवीन वर्गणी नोंदवणे, बदलणे किंवा हटवणे बंद आहे.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFE65100),
+                        ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+            ],
+
+            // 1. Year Selector Card
+            Card(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_month, color: _deepSaffron),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'वर्ष निवडा: ',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Spacer(),
                     DropdownButton<int>(
                       value: selectedYear,
-                      underline: const SizedBox.shrink(),
-                      items: List.generate(6, (index) {
-                        final year = DateTime.now().year - index;
-                        return DropdownMenuItem<int>(
+                      underline: const SizedBox(),
+                      borderRadius: BorderRadius.circular(14),
+                      items: List.generate(10, (index) {
+                        final year = DateTime.now().year - index + 1;
+                        return DropdownMenuItem(
                           value: year,
-                          child: Text('$year'),
+                          child: Text(
+                            '$year',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         );
                       }),
-                      onChanged: (value) async {
+                      onChanged: (value) {
                         if (value == null) return;
                         setState(() {
                           selectedYear = value;
                           searchQuery = '';
                           searchController.clear();
                         });
-                        await loadData();
+                        loadData();
                       },
                     ),
                   ],
@@ -501,42 +584,44 @@ class _VarganiScreenState extends State<VarganiScreen> {
             ),
             const SizedBox(height: 12),
 
-            // 2. Search Field Card (Placeholder: नाव शोधा)
+            // 2. Real-time Search Box
             Card(
-              child: TextField(
-                controller: searchController,
-                onChanged: (value) {
-                  setState(() {
-                    searchQuery = value;
-                  });
-                },
-                decoration: InputDecoration(
-                  hintText: 'नाव शोधा',
-                  prefixIcon: const Icon(Icons.search, color: _deepSaffron),
-                  suffixIcon: searchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, color: Colors.grey),
-                          onPressed: () {
-                            searchController.clear();
-                            setState(() {
-                              searchQuery = '';
-                            });
-                          },
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: TextField(
+                  controller: searchController,
+                  enabled: canSearch,
+                  decoration: InputDecoration(
+                    hintText: canSearch
+                        ? 'नावानुसार वर्गणीदार शोधा...'
+                        : 'शोधण्याची परवानगी नाही',
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    icon: const Icon(Icons.search, color: _deepSaffron),
+                    suffixIcon: searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 20),
+                            onPressed: () {
+                              searchController.clear();
+                              setState(() {
+                                searchQuery = '';
+                              });
+                            },
+                          )
+                        : null,
                   ),
+                  onChanged: (value) {
+                    setState(() {
+                      searchQuery = value;
+                    });
+                  },
                 ),
               ),
             ),
             const SizedBox(height: 12),
 
-            // 3. Previous Year Balance Card (मागील वर्ष शिल्लक)
+            // 3. Previous Year Balance Section
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -556,23 +641,28 @@ class _VarganiScreenState extends State<VarganiScreen> {
                         Expanded(
                           child: TextField(
                             controller: previousBalanceController,
+                            enabled: canEdit,
                             keyboardType:
                                 const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               prefixText: '₹ ',
                               hintText: 'उदा. 8951',
                               labelText: 'शिल्लक रक्कम',
+                              fillColor:
+                                  canEdit ? null : const Color(0xFFF9F6F0),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        FilledButton.icon(
-                          onPressed: savePreviousBalance,
-                          icon: const Icon(Icons.save_outlined),
-                          label: const Text('जतन'),
-                        ),
+                        if (canEdit) ...[
+                          const SizedBox(width: 10),
+                          FilledButton.icon(
+                            onPressed: savePreviousBalance,
+                            icon: const Icon(Icons.save_outlined),
+                            label: const Text('जतन'),
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -634,9 +724,9 @@ class _VarganiScreenState extends State<VarganiScreen> {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: const Color(0xFFFFD8B3)),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 36,
                     child: Text(
                       'आ न',
@@ -647,8 +737,8 @@ class _VarganiScreenState extends State<VarganiScreen> {
                       ),
                     ),
                   ),
-                  SizedBox(width: 12),
-                  Expanded(
+                  const SizedBox(width: 12),
+                  const Expanded(
                     child: Text(
                       'नाव',
                       style: TextStyle(
@@ -658,7 +748,7 @@ class _VarganiScreenState extends State<VarganiScreen> {
                       ),
                     ),
                   ),
-                  Text(
+                  const Text(
                     'जमा रक्कम',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
@@ -666,7 +756,10 @@ class _VarganiScreenState extends State<VarganiScreen> {
                       fontSize: 13,
                     ),
                   ),
-                  SizedBox(width: 90), // Offset for edit and delete action buttons
+                  if (canEdit || canDelete)
+                    const SizedBox(width: 90)
+                  else
+                    const SizedBox(width: 8),
                 ],
               ),
             ),
@@ -712,7 +805,9 @@ class _VarganiScreenState extends State<VarganiScreen> {
 
                 return Dismissible(
                   key: ValueKey('vargani-${item['id']}'),
-                  direction: DismissDirection.endToStart,
+                  direction: canDelete
+                      ? DismissDirection.endToStart
+                      : DismissDirection.none,
                   background: recordDeleteBackground(),
                   confirmDismiss: (_) => confirmRecordDelete(
                     context,
@@ -767,19 +862,21 @@ class _VarganiScreenState extends State<VarganiScreen> {
                               ],
                             ),
                           ),
-                          IconButton(
-                            tooltip: 'बदला',
-                            onPressed: () => editVargani(item),
-                            icon: const Icon(Icons.edit_outlined),
-                          ),
-                          IconButton(
-                            tooltip: 'हटवा',
-                            onPressed: () => deleteVargani(item['id']),
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: Colors.red,
+                          if (canEdit)
+                            IconButton(
+                              tooltip: 'बदला',
+                              onPressed: () => editVargani(item),
+                              icon: const Icon(Icons.edit_outlined),
                             ),
-                          ),
+                          if (canDelete)
+                            IconButton(
+                              tooltip: 'हटवा',
+                              onPressed: () => deleteVargani(item['id']),
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.red,
+                              ),
+                            ),
                         ],
                       ),
                     ),
