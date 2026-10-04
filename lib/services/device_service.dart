@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:io';
 import 'dart:math';
 
@@ -6,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../database/database_helper.dart';
 import '../models/device_model.dart';
+import '../models/khajani_user.dart';
 
 class DeviceService {
   static final DeviceService instance = DeviceService._internal();
@@ -235,9 +237,10 @@ class DeviceService {
     required String userName,
     required String requestType,
     String? requestedRole,
+    String? customRequestId,
   }) async {
     final devId = await getDeviceId();
-    final reqId = generateUniqueRequestId();
+    final reqId = customRequestId ?? generateUniqueRequestId();
     final now = DateTime.now().millisecondsSinceEpoch;
 
     final request = DeviceRequestModel(
@@ -260,7 +263,105 @@ class DeviceService {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
+    // Standard debugging log: REQUEST_CREATED
+    print('[REQUEST_CREATED] requestId=$reqId userId=$userId deviceId=$devId timestamp=$now status=PENDING');
+
     return request;
+  }
+
+  /// Save an incoming request received via Signaling Server onto Developer phone's local DB
+  Future<DeviceRequestModel> saveIncomingRequestFromSignaling(Map<String, dynamic> data) async {
+    final requestId = (data['requestId'] ?? data['request_id'] ?? generateUniqueRequestId()) as String;
+    final userId = (data['userId'] ?? data['user_id'] ?? '') as String;
+    final userName = (data['userName'] ?? data['user_name'] ?? 'नवीन वापरकर्ता') as String;
+    final deviceId = (data['deviceId'] ?? data['device_id'] ?? '') as String;
+    final deviceName = (data['deviceName'] ?? data['device_name'] ?? 'Android Phone') as String;
+    final requestType = (data['requestType'] ?? data['request_type'] ?? 'NEW_ACCOUNT') as String;
+    final requestedRole = (data['requestedRole'] ?? data['requested_role'] ?? 'OLD_KHAJANI') as String;
+    final createdAt = (data['createdAt'] ?? data['created_at'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch;
+    final status = (data['status'] as String?) ?? DeviceStatus.pending;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    final req = DeviceRequestModel(
+      requestId: requestId,
+      userId: userId,
+      userName: userName,
+      deviceId: deviceId,
+      deviceName: deviceName,
+      requestType: requestType,
+      status: status,
+      requestedRole: requestedRole,
+      createdAt: createdAt,
+      updatedAt: now,
+    );
+
+    final db = await DatabaseHelper.instance.database;
+
+    // 1. Insert or update device_requests table
+    await db.insert(
+      'device_requests',
+      req.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    // 2. Insert or update khajani_users table as PENDING if not already existing
+    if (userId.isNotEmpty) {
+      final existingUser = await db.query(
+        'khajani_users',
+        where: 'user_id = ?',
+        whereArgs: [userId],
+        limit: 1,
+      );
+
+      if (existingUser.isEmpty) {
+        await db.insert(
+          'khajani_users',
+          {
+            'user_id': userId,
+            'name': userName,
+            'password_hash': '',
+            'salt': '',
+            'role': requestedRole,
+            'status': KhajaniStatus.pending,
+            'is_active': 1,
+            'can_view': 0,
+            'can_add': 0,
+            'can_edit': 0,
+            'can_delete': 0,
+            'can_search': 0,
+            'can_pdf': 0,
+            'can_manage_khajani': 0,
+            'can_sync': 0,
+            'created_at': createdAt,
+            'updated_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    }
+
+    // 3. Register remote device in devices table
+    if (deviceId.isNotEmpty) {
+      await db.insert(
+        'devices',
+        {
+          'device_id': deviceId,
+          'device_name': deviceName,
+          'user_id': userId,
+          'status': status,
+          'created_at': createdAt,
+          'updated_at': now,
+          'last_seen_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    // Standard Debugging Logs
+    print('[DEVELOPER_RECEIVED] requestId=$requestId userId=$userId deviceId=$deviceId timestamp=$now status=$status');
+    print('[REQUEST_SAVED] requestId=$requestId userId=$userId deviceId=$deviceId timestamp=$now status=$status');
+
+    return req;
   }
 
   /// Get list of device requests
@@ -290,6 +391,11 @@ class DeviceService {
     );
   }
 
+  /// Reject device request
+  Future<void> rejectDeviceRequest(String requestId) async {
+    await updateDeviceRequestStatus(requestId, DeviceStatus.rejected);
+  }
+
   /// Delete a device request
   Future<void> deleteDeviceRequest(String requestId) async {
     final db = await DatabaseHelper.instance.database;
@@ -299,4 +405,48 @@ class DeviceService {
       whereArgs: [requestId],
     );
   }
+
+  /// Get request by requestId
+  Future<DeviceRequestModel?> getRequestById(String requestId) async {
+    final db = await DatabaseHelper.instance.database;
+    final rows = await db.query(
+      'device_requests',
+      where: 'request_id = ?',
+      whereArgs: [requestId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DeviceRequestModel.fromMap(rows.first);
+  }
+
+  /// Get latest pending request for this device
+  Future<DeviceRequestModel?> getLatestPendingRequest() async {
+    final db = await DatabaseHelper.instance.database;
+    final devId = await getDeviceId();
+    final rows = await db.query(
+      'device_requests',
+      where: 'device_id = ? AND status = ?',
+      whereArgs: [devId, DeviceStatus.pending],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DeviceRequestModel.fromMap(rows.first);
+  }
+
+  /// Get latest approved request for this device
+  Future<DeviceRequestModel?> getLatestApprovedRequest() async {
+    final db = await DatabaseHelper.instance.database;
+    final devId = await getDeviceId();
+    final rows = await db.query(
+      'device_requests',
+      where: 'device_id = ? AND status = ?',
+      whereArgs: [devId, DeviceStatus.approved],
+      orderBy: 'updated_at DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DeviceRequestModel.fromMap(rows.first);
+  }
 }
+

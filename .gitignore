@@ -172,3 +172,7 @@ web/flutter_service_worker.js
 /database/
 /databases/
 !lib/database/
+
+# Binary executables and runtime state
+*.exe
+server/.pending_requests.json

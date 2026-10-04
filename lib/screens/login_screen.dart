@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import '../main.dart';
 import '../models/khajani_user.dart';
 import '../services/auth_service.dart';
 import '../services/device_service.dart';
+import '../services/remote_sync_service.dart';
 import '../services/signaling_service.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
@@ -51,6 +53,8 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
   String? _successMessage;
 
   String _deviceId = '';
+  String? _pendingRequestId;
+  String? _pendingUserId;
   bool _isDeviceRevoked = false;
 
   List<KhajaniUser> _existingKhajanis = [];
@@ -83,25 +87,47 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
         });
       }
 
+      // Check if this device already has an approved user in local DB
+      final approvedReq = await _deviceService.getLatestApprovedRequest();
+      if (approvedReq != null && approvedReq.isApproved) {
+        final approvedUser = await _authService.getKhajaniById(approvedReq.userId);
+        if (approvedUser != null && approvedUser.isApproved && !isRevoked) {
+          await _authService.initSession();
+          if (_authService.isLoggedIn && mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const DashboardScreen()),
+              (route) => false,
+            );
+            return;
+          }
+        }
+      }
+
+      // Record any local pending request ID
+      final pendingReq = await _deviceService.getLatestPendingRequest();
+      if (pendingReq != null && pendingReq.isPending) {
+        _pendingRequestId = pendingReq.requestId;
+        _pendingUserId = pendingReq.userId;
+      }
+
       // Try connecting in the background (does not block local login)
       unawaited(_signalingService.connect(timeout: const Duration(seconds: 3)));
 
-      _signalingSub = _signalingService.onMessage.listen((msg) {
+      _signalingSub = _signalingService.onMessage.listen((msg) async {
         final type = msg['type'] as String?;
-        final targetDev = msg['deviceId'] as String?;
+        final targetDev = (msg['deviceId'] ?? msg['device_id']) as String?;
+        final requestId = (msg['requestId'] ?? msg['request_id'] ?? '') as String;
+        final userId = (msg['userId'] ?? msg['user_id'] ?? '') as String;
 
         if (targetDev == _deviceId) {
           if (type == 'device_approval_result') {
             final status = msg['status'] as String? ?? 'APPROVED';
             if (status == 'APPROVED') {
-              if (mounted) {
-                setState(() {
-                  _errorMessage = null;
-                  _isDeviceRevoked = false;
-                  _successMessage =
-                      'अभिनंदन! आपले खाते व डिव्हाइस मंजूर झाले आहे. कृपया आता लॉगिन करा.';
-                });
-              }
+              await _handleApprovalWithSync(
+                requestId: requestId,
+                userId: userId,
+                msg: msg,
+              );
             } else if (status == 'REJECTED') {
               if (mounted) {
                 setState(() {
@@ -121,6 +147,84 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
         }
       });
     } catch (_) {}
+  }
+
+  Future<void> _handleApprovalWithSync({
+    required String requestId,
+    required String userId,
+    required Map<String, dynamic> msg,
+  }) async {
+    // 1. Ensure local DB & session are updated
+    await _authService.applyApprovalLocally(
+      requestId: requestId,
+      userId: userId,
+      deviceId: _deviceId,
+      role: (msg['role'] ?? 'OLD_KHAJANI') as String,
+      permissionsMap: msg['permissions'] as Map<String, dynamic>?,
+    );
+
+    // STEP 9: DASHBOARD_AVAILABLE
+    print('[DASHBOARD_AVAILABLE] requestId=$requestId userId=$userId deviceId=$_deviceId status=APPROVED');
+
+    if (!mounted) return;
+
+    // Check user role and permissions
+    final canView = _authService.canView;
+    if (canView && !RemoteSyncService.instance.isMaster) {
+      // Show sync progress dialog
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogCtx) {
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2.8, color: _saffron),
+                  ),
+                  SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      'डेटा सिंक करत आहे...',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              content: const Text(
+                'मंजुरी यशस्वी झाली आहे! मास्टर फोनवरून चालू व मागील सर्व वर्षांचा मंडळ डेटा (वर्गणी, देणगी, खर्च, शिल्लक) सिंक केला जात आहे...',
+                style: TextStyle(height: 1.4, fontSize: 13),
+              ),
+            ),
+          );
+        },
+      );
+
+      // Perform sync from Master
+      try {
+        await RemoteSyncService.instance.requestSyncFromMaster(
+          timeout: const Duration(seconds: 8),
+        );
+      } catch (_) {}
+
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const DashboardScreen()),
+          (route) => false,
+        );
+      }
+    } else {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const DashboardScreen()),
+        (route) => false,
+      );
+    }
   }
 
   Future<void> _checkInitialState() async {
@@ -282,21 +386,27 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
     });
 
     try {
-      await _authService.requestNewAccount(
+      final user = await _authService.requestNewAccount(
         name: name,
         password: password,
       );
 
       if (!mounted) return;
 
+      final devReq = await _deviceService.getLatestPendingRequest();
+
       setState(() {
         _isRequestMode = false;
         _passwordController.clear();
         _confirmPasswordController.clear();
+        _pendingUserId = user.userId;
+        _pendingRequestId = devReq?.requestId;
+        _errorMessage = 'Developer approval pending';
         _successMessage =
             'आपली खाते विनंती यशस्वीरीत्या पाठवली गेली आहे! (Status: PENDING)\nडिव्हाइस आयडी: $_deviceId\nDeveloper च्या मंजुरीनंतरच ॲपमध्ये प्रवेश मिळेल.';
       });
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -384,35 +494,118 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
       final isRevoked = await _deviceService.isCurrentDeviceRevoked();
       _isDeviceRevoked = isRevoked;
 
-      // Also try reconnecting to server
-      if (!_signalingService.isConnected) {
-        await _signalingService.connect(timeout: const Duration(seconds: 3));
-      }
+      final devId = _deviceId.isNotEmpty ? _deviceId : await _deviceService.getDeviceId();
+      final approvedReq = await _deviceService.getLatestApprovedRequest();
+      final pendingReq = await _deviceService.getLatestPendingRequest();
 
-      // Check if user is now approved in local DB
-      final name = _nameController.text.trim();
-      if (name.isNotEmpty) {
-        final allUsers = await _authService.getAllKhajanis();
-        final match = allUsers.where((u) => u.name.toLowerCase() == name.toLowerCase()).toList();
-        if (match.isNotEmpty && match.first.isApproved && !isRevoked) {
-          setState(() {
-            _errorMessage = null;
-            _successMessage = 'अभिनंदन! आपले खाते मंजूर झाले आहे. कृपया आता पासवर्ड टाकून लॉगिन करा.';
-          });
+      // Check if already approved in local SQLite database
+      if (approvedReq != null && approvedReq.isApproved) {
+        final user = await _authService.getKhajaniById(approvedReq.userId);
+        if (user != null && user.isApproved && !isRevoked) {
+          await _authService.initSession();
+          // STEP 9: DASHBOARD_AVAILABLE
+          print('[DASHBOARD_AVAILABLE] requestId=${approvedReq.requestId} userId=${user.userId} deviceId=$devId status=APPROVED');
+          if (mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const DashboardScreen()),
+              (route) => false,
+            );
+          }
           return;
         }
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _signalingService.isConnected
-                  ? 'सर्व्हर जोडला आहे. अद्याप Developer मंजुरी मिळालेली नाही.'
-                  : 'सर्व्हर ऑफलाइन आहे. स्थानिक मंजुरी तपासली गेली.',
-            ),
-          ),
+      final reqId = _pendingRequestId ?? pendingReq?.requestId;
+      final uId = _pendingUserId ?? pendingReq?.userId;
+
+      if (reqId == null || reqId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('कोणतीही प्रलंबित विनंती आढळली नाही.')),
+          );
+        }
+        return;
+      }
+
+      // Reconnect to server if needed
+      if (!_signalingService.isConnected) {
+        await _signalingService.connect(timeout: const Duration(seconds: 4));
+      }
+
+      if (_signalingService.isConnected) {
+        // Query server using existing requestId + userId + deviceId (DO NOT create new request!)
+        final statusCompleter = Completer<bool>();
+        late StreamSubscription tempSub;
+        tempSub = _signalingService.onMessage.listen((msg) async {
+          final type = msg['type'] as String?;
+          final rId = (msg['requestId'] ?? msg['request_id']) as String?;
+          final targetDev = (msg['deviceId'] ?? msg['device_id']) as String?;
+          final targetUser = (msg['userId'] ?? msg['user_id']) as String?;
+
+          if (targetDev == devId &&
+              (rId == null || rId == reqId) &&
+              (targetUser == null || targetUser == uId)) {
+            if (type == 'device_approval_result') {
+              final status = msg['status'] as String? ?? 'APPROVED';
+              if (status == 'APPROVED') {
+                await _authService.applyApprovalLocally(
+                  requestId: reqId,
+                  userId: uId ?? '',
+                  deviceId: devId,
+                  role: (msg['role'] ?? 'OLD_KHAJANI') as String,
+                  permissionsMap: msg['permissions'] as Map<String, dynamic>?,
+                );
+                if (!statusCompleter.isCompleted) statusCompleter.complete(true);
+              }
+            } else if (type == 'check_status_result') {
+              final status = msg['status'] as String? ?? 'PENDING';
+              if (status != 'APPROVED') {
+                if (!statusCompleter.isCompleted) statusCompleter.complete(false);
+              }
+            }
+          }
+        });
+
+        _signalingService.checkRequestStatus(
+          requestId: reqId,
+          userId: uId ?? '',
+          deviceId: devId,
         );
+
+        final isApproved = await statusCompleter.future.timeout(
+          const Duration(seconds: 4),
+          onTimeout: () => false,
+        );
+
+        await tempSub.cancel();
+
+        if (isApproved) {
+          await _authService.initSession();
+          print('[DASHBOARD_AVAILABLE] requestId=$reqId userId=$uId deviceId=$devId status=APPROVED');
+          if (mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const DashboardScreen()),
+              (route) => false,
+            );
+          }
+          return;
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('अद्याप Developer मंजुरी मिळालेली नाही. कृपया प्रतीक्षा करा.'),
+              ),
+            );
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('सर्व्हर ऑफलाइन आहे. इंटरनेट सुरू झाल्यावर पुन्हा तपासा.'),
+            ),
+          );
+        }
       }
     } catch (_) {
     } finally {
@@ -461,7 +654,7 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
                       controller: urlController,
                       decoration: const InputDecoration(
                         labelText: 'WebSocket URL',
-                        hintText: 'ws://192.168.1.100:8080 किंवा wss://...',
+                        hintText: 'wss://amino-dropkick-resample.ngrok-free.dev',
                         prefixIcon: Icon(Icons.link, color: _deepSaffron),
                       ),
                     ),
@@ -591,8 +784,43 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
                             ValueListenableBuilder<SignalingConnectionState>(
                               valueListenable: _signalingService.connectionState,
                               builder: (context, state, _) {
-                                final isConn =
-                                    state == SignalingConnectionState.connected;
+                                Color bgColor;
+                                Color borderColor;
+                                Color dotColor;
+                                Color textColor;
+                                String label;
+
+                                switch (state) {
+                                  case SignalingConnectionState.connected:
+                                    bgColor = const Color(0xFFE8F5E9);
+                                    borderColor = const Color(0xFFA5D6A7);
+                                    dotColor = Colors.green;
+                                    textColor = const Color(0xFF1B5E20);
+                                    label = 'Connected 🟢';
+                                    break;
+                                  case SignalingConnectionState.connecting:
+                                    bgColor = const Color(0xFFFFF8E1);
+                                    borderColor = const Color(0xFFFFE082);
+                                    dotColor = Colors.amber.shade700;
+                                    textColor = const Color(0xFFB78103);
+                                    label = 'Connecting 🟡';
+                                    break;
+                                  case SignalingConnectionState.error:
+                                    bgColor = const Color(0xFFFFECEC);
+                                    borderColor = const Color(0xFFFFCDCD);
+                                    dotColor = Colors.red;
+                                    textColor = const Color(0xFFB00020);
+                                    label = 'Error 🔴';
+                                    break;
+                                  case SignalingConnectionState.disconnected:
+                                    bgColor = const Color(0xFFF5F5F5);
+                                    borderColor = const Color(0xFFE0E0E0);
+                                    dotColor = Colors.grey;
+                                    textColor = const Color(0xFF616161);
+                                    label = 'Disconnected ⚪';
+                                    break;
+                                }
+
                                 return InkWell(
                                   onTap: _showServerConfigDialog,
                                   borderRadius: BorderRadius.circular(20),
@@ -602,15 +830,9 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
                                       vertical: 5,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: isConn
-                                          ? const Color(0xFFE8F5E9)
-                                          : const Color(0xFFFFEBEE),
+                                      color: bgColor,
                                       borderRadius: BorderRadius.circular(20),
-                                      border: Border.all(
-                                        color: isConn
-                                            ? const Color(0xFFA5D6A7)
-                                            : const Color(0xFFEF9A9A),
-                                      ),
+                                      border: Border.all(color: borderColor),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
@@ -619,23 +841,17 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
                                           width: 8,
                                           height: 8,
                                           decoration: BoxDecoration(
-                                            color: isConn
-                                                ? Colors.green
-                                                : Colors.grey,
+                                            color: dotColor,
                                             shape: BoxShape.circle,
                                           ),
                                         ),
                                         const SizedBox(width: 6),
                                         Text(
-                                          isConn
-                                              ? 'Server is ON 🟢'
-                                              : 'Server is OFF 🔴',
+                                          label,
                                           style: TextStyle(
                                             fontSize: 11.5,
                                             fontWeight: FontWeight.bold,
-                                            color: isConn
-                                                ? const Color(0xFF1B5E20)
-                                                : const Color(0xFFC62828),
+                                            color: textColor,
                                           ),
                                         ),
                                       ],

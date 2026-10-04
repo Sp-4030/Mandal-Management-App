@@ -64,11 +64,42 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
       _tabController!.addListener(() {
         if (mounted) setState(() {});
       });
+
+      _signalingService.setPersistentMode(true);
+      if (!_signalingService.isConnected) {
+        _signalingService.connect().then((_) {
+          if (mounted) {
+            _deviceService.getDeviceId().then((devId) {
+              _signalingService.registerClient(
+                role: 'DEVELOPER',
+                deviceId: devId,
+                userId: _authService.currentUser?.userId,
+                userName: _authService.currentUser?.name,
+              );
+              _signalingService.requestPendingList();
+            });
+          }
+        });
+      } else {
+        _deviceService.getDeviceId().then((devId) {
+          _signalingService.registerClient(
+            role: 'DEVELOPER',
+            deviceId: devId,
+            userId: _authService.currentUser?.userId,
+            userName: _authService.currentUser?.name,
+          );
+          _signalingService.requestPendingList();
+        });
+      }
     }
 
     _signalingSub = _signalingService.onMessage.listen((msg) {
       final type = msg['type'] as String?;
-      if (type == 'new_pending_request' || type == 'pending_requests_list') {
+      if (type == 'new_pending_request' ||
+          type == 'pending_requests_list' ||
+          type == 'device_approval_result' ||
+          type == 'device_rejection_result' ||
+          type == 'device_request_ack') {
         _loadKhajanis();
       }
     });
@@ -80,6 +111,9 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
 
   @override
   void dispose() {
+    if (_authService.isDeveloper) {
+      _signalingService.setPersistentMode(false);
+    }
     _signalingSub?.cancel();
     _tabController?.dispose();
     super.dispose();
@@ -98,6 +132,8 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
           _deviceRequestsList = reqs;
           _isLoading = false;
         });
+        // ignore: avoid_print
+        print('[PENDING_UI_REFRESHED] timestamp=${DateTime.now().millisecondsSinceEpoch} pendingCount=${_pendingRequests.length}');
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
@@ -127,8 +163,31 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
     return '${dt.day} ${marathiMonths[dt.month - 1]} ${dt.year}, $hour12:$minuteStr $period';
   }
 
-  List<KhajaniUser> get _pendingRequests =>
-      _khajaniList.where((u) => u.isPending).toList();
+  List<KhajaniUser> get _pendingRequests {
+    final list = List<KhajaniUser>.from(_khajaniList.where((u) => u.isPending));
+    final existingUserIds = list.map((u) => u.userId).toSet();
+
+    for (final req in _deviceRequestsList) {
+      if (req.isPending && !existingUserIds.contains(req.userId)) {
+        list.add(
+          KhajaniUser(
+            userId: req.userId,
+            name: req.userName,
+            passwordHash: '',
+            salt: '',
+            role: req.requestedRole ?? KhajaniRole.oldKhajani,
+            status: KhajaniStatus.pending,
+            isActive: true,
+            permissions: const KhajaniPermissions.pending(),
+            createdAt: req.createdAt,
+            updatedAt: req.updatedAt,
+          ),
+        );
+        existingUserIds.add(req.userId);
+      }
+    }
+    return list;
+  }
 
   List<KhajaniUser> get _approvedUsers =>
       _khajaniList.where((u) => u.isApproved).toList();
@@ -173,6 +232,7 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
     KhajaniUser user, {
     String? deviceId,
     String? requestType,
+    String? requestId,
   }) {
     String selectedRole = KhajaniRole.latestKhajani;
     KhajaniPermissions permissions = const KhajaniPermissions.latestDefault();
@@ -439,6 +499,7 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
                               role: selectedRole,
                               permissions: permissions,
                               deviceId: deviceId,
+                              requestId: requestId,
                             );
 
                             if (!mounted) return;
@@ -493,7 +554,11 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
   // DEVELOPER: DELETE PENDING REQUEST CONFIRMATION
   // ============================================================
 
-  Future<void> _handleDeletePendingRequest(KhajaniUser user) async {
+  Future<void> _handleDeletePendingRequest(
+    KhajaniUser user, {
+    String? requestId,
+    String? deviceId,
+  }) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -538,11 +603,15 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
     if (confirmed != true) return;
 
     try {
-      await _authService.deleteKhajani(userId: user.userId);
+      await _authService.rejectOrDeleteRequest(
+        requestId: requestId ?? 'req_${user.userId}',
+        userId: user.userId,
+        deviceId: deviceId,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('"${user.name}" यांची खाते विनंती कायमची हटवली.'),
+          content: Text('"${user.name}" यांची खाते विनंती हटवली / नाकारली.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -2377,14 +2446,14 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
                 },
               ),
               const Text(
-                'PC वरील WebSocket Signaling Server URL (उदा: ws://192.168.1.100:8080):',
+                'PC वरील WebSocket Signaling Server URL (उदा: wss://amino-dropkick-resample.ngrok-free.dev):',
                 style: TextStyle(fontSize: 12, color: Color(0xFF756A5D)),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: urlController,
                 decoration: const InputDecoration(
-                  hintText: 'ws://192.168.1.X:8080',
+                  hintText: 'wss://amino-dropkick-resample.ngrok-free.dev',
                   isDense: true,
                 ),
               ),
@@ -2436,6 +2505,7 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
       }
     }
     final deviceId = matchingReq?.deviceId ?? 'N/A';
+    final requestId = matchingReq?.requestId;
     final requestType = matchingReq?.requestType ?? 'NEW_ACCOUNT';
     final requestTime = matchingReq != null && matchingReq.requestedAt > 0
         ? _formatDate(matchingReq.requestedAt)
@@ -2587,6 +2657,7 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
                       user,
                       deviceId: deviceId != 'N/A' ? deviceId : null,
                       requestType: requestType,
+                      requestId: requestId,
                     ),
                     icon: const Icon(Icons.check_circle_outline, size: 18),
                     label: const Text(
@@ -2608,7 +2679,11 @@ class _KhajaniManagementScreenState extends State<KhajaniManagementScreen>
                 // DELETE Button
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _handleDeletePendingRequest(user),
+                    onPressed: () => _handleDeletePendingRequest(
+                      user,
+                      requestId: requestId,
+                      deviceId: deviceId != 'N/A' ? deviceId : null,
+                    ),
                     icon: const Icon(Icons.delete_outline, size: 18),
                     label: const Text(
                       'DELETE',

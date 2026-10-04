@@ -257,7 +257,7 @@ void main() {
   group('Signaling Service & Remote Sync Architecture', () {
     test('Signaling service default URL and configuration', () {
       final signaling = SignalingService.instance;
-      expect(SignalingService.defaultServerUrl, contains('ws://'));
+      expect(SignalingService.defaultServerUrl, anyOf(contains('ws://'), contains('wss://')));
       expect(signaling.serverUrl, isNotEmpty);
       expect(signaling.isConnected, isFalse);
     });

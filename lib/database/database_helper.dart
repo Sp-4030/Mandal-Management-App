@@ -134,11 +134,21 @@ class DatabaseHelper {
   }
 
   void _assertCanSync() {
+    _assertDeviceNotRevoked();
     if (AuthService.instance.isDeveloper) return;
-    _assertCanModifyData();
-    if (!AuthService.instance.canSync) {
+    if (!AuthService.instance.canView && !AuthService.instance.canSync) {
       throw StateError(
         'डेटा सिंक / मायग्रेशन करण्याची परवानगी (Sync Permission) नाही.',
+      );
+    }
+  }
+
+  void _assertCanSyncData() {
+    _assertDeviceNotRevoked();
+    if (AuthService.instance.isDeveloper) return;
+    if (!AuthService.instance.canView) {
+      throw StateError(
+        'आर्थिक माहिती पाहण्याची किंवा सिंक करण्याची परवानगी (View Permission) नाही.',
       );
     }
   }
@@ -925,7 +935,7 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS server_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
-        server_url TEXT NOT NULL DEFAULT 'ws://192.168.1.100:8080',
+        server_url TEXT NOT NULL DEFAULT 'wss://amino-dropkick-resample.ngrok-free.dev',
         auto_connect INTEGER NOT NULL DEFAULT 1,
         updated_at INTEGER NOT NULL
       )
@@ -933,7 +943,7 @@ class DatabaseHelper {
 
     await db.execute('''
       INSERT OR IGNORE INTO server_config (id, server_url, auto_connect, updated_at)
-      VALUES (1, 'ws://192.168.1.100:8080', 1, 0)
+      VALUES (1, 'wss://amino-dropkick-resample.ngrok-free.dev', 1, 0)
     ''');
 
     await db.execute('''
@@ -1112,12 +1122,39 @@ class DatabaseHelper {
     };
   }
 
+  Future<Map<String, dynamic>> createFinancialSnapshot() async {
+    return await createMigrationSnapshot();
+  }
+
+  Future<Map<String, int>> getLatestKnownIds() async {
+    final db = await database;
+    final map = <String, int>{};
+    for (final table in migrationDataTables) {
+      final res = await db.rawQuery('SELECT MAX(id) as max_id FROM $table');
+      final maxId = (res.first['max_id'] as num?)?.toInt() ?? 0;
+      map[table] = maxId;
+    }
+    return map;
+  }
+
+  Future<bool> importFinancialSnapshot({
+    required String syncId,
+    required Map<String, dynamic> tables,
+    required String payloadDigest,
+  }) async {
+    return await importMigrationSnapshot(
+      migrationId: syncId,
+      tables: tables,
+      payloadDigest: payloadDigest,
+    );
+  }
+
   Future<bool> importMigrationSnapshot({
     required String migrationId,
     required Map<String, dynamic> tables,
     required String payloadDigest,
   }) async {
-    _assertCanSync();
+    _assertCanSyncData();
 
     final db = await database;
     try {
@@ -1146,6 +1183,81 @@ class DatabaseHelper {
             'migration_id': migrationId,
             'completed_at': DateTime.now().millisecondsSinceEpoch,
             'direction': 'received',
+            'record_counts': jsonEncode(counts),
+            'payload_digest': payloadDigest,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      });
+      await _createAutomaticBackup(db);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Creates a delta/incremental snapshot containing only records added or updated since lastKnownIds
+  Future<Map<String, dynamic>> createDeltaSnapshot({Map<String, int>? lastKnownIds}) async {
+    final db = await database;
+    final data = <String, List<Map<String, dynamic>>>{};
+    final ids = lastKnownIds ?? {};
+    int totalDeltaCount = 0;
+
+    for (final table in migrationDataTables) {
+      final lastId = ids[table] ?? 0;
+      final rows = await db.query(
+        table,
+        where: 'id > ?',
+        whereArgs: [lastId],
+        orderBy: 'id ASC',
+      );
+      data[table] = rows.map((row) => Map<String, dynamic>.from(row)).toList(growable: false);
+      totalDeltaCount += rows.length;
+    }
+
+    return {
+      'schemaVersion': await db.getVersion(),
+      'dataVersion': 1,
+      'isDelta': true,
+      'totalDeltaCount': totalDeltaCount,
+      'tables': data,
+    };
+  }
+
+  /// Imports a delta/incremental snapshot without wiping out the entire database
+  Future<bool> importDeltaSnapshot({
+    required String syncId,
+    required Map<String, dynamic> deltaTables,
+    required String payloadDigest,
+  }) async {
+    _assertCanSyncData();
+
+    final db = await database;
+    try {
+      await db.transaction((txn) async {
+        for (final table in migrationDataTables) {
+          final rows = deltaTables[table] as List<dynamic>? ?? [];
+          for (final row in rows) {
+            await txn.insert(
+              table,
+              Map<String, dynamic>.from(row as Map),
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
+        }
+
+        final counts = <String, int>{};
+        for (final table in migrationDataTables) {
+          final res = await txn.rawQuery('SELECT COUNT(*) AS c FROM $table');
+          counts[table] = (res.first['c'] as num?)?.toInt() ?? 0;
+        }
+
+        await txn.insert(
+          'migration_history',
+          {
+            'migration_id': syncId,
+            'completed_at': DateTime.now().millisecondsSinceEpoch,
+            'direction': 'delta_received',
             'record_counts': jsonEncode(counts),
             'payload_digest': payloadDigest,
           },

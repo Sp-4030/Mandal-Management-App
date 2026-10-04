@@ -1,55 +1,31 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
-title Stop Hindvi Signaling Server
+title Hindvi Mandal - Stop Server
+cd /d "%~dp0"
 
 echo ============================================================
-echo   HINDVI SWARAJYA APP - STOP SIGNALING SERVER
+echo   HINDVI SWARAJYA MANDAL - STOPPING SERVER & NGROK
 echo ============================================================
 echo.
 
-set SERVER_PORT=8080
-set NO_PAUSE=0
-
-for %%x in (%*) do (
-    if "%%x"=="--no-pause" (
-        set NO_PAUSE=1
-    ) else (
-        set SERVER_PORT=%%x
-    )
+rem 1. Kill any process listening on port 8080
+echo [1/3] Stopping Signaling Server on port 8080...
+for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":8080 " ^| findstr "LISTENING"') do (
+    taskkill /f /pid %%a >nul 2>&1
 )
 
-echo Checking for running signaling server on Port %SERVER_PORT%...
+rem 2. Kill ngrok.exe
+echo [2/3] Stopping ngrok tunnel...
+taskkill /f /im ngrok.exe >nul 2>&1
 
-set FOUND=0
-for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":%SERVER_PORT% " ^| findstr "LISTENING"') do (
-    set PID=%%a
-    if not "!PID!"=="0" (
-        echo [INFO] Found server running on PID: !PID!
-        taskkill /f /pid !PID! >nul 2>&1
-        if !ERRORLEVEL! EQU 0 (
-            echo [OK] Signaling Server process !PID! stopped successfully.
-            set FOUND=1
-        ) else (
-            echo [WARN] Could not stop PID !PID!. It may have already exited.
-        )
-    )
-)
-
-taskkill /fi "WINDOWTITLE eq Hindvi PC Signaling Server*" /f >nul 2>&1
-
-if "!FOUND!"=="0" (
-    echo [INFO] No active signaling server was found running on Port %SERVER_PORT%.
-    echo [INFO] Status: Server is OFF 🔴
-) else (
-    echo.
-    echo ============================================================
-    echo   [SUCCESS] Server is OFF 🔴
-    echo   PC Signaling Server has been safely stopped.
-    echo ============================================================
-)
+rem 3. Clean temporary ngrok log
+echo [3/3] Cleaning resources...
+if exist ngrok.log del /f /q ngrok.log >nul 2>&1
 
 echo.
-if "!NO_PAUSE!"=="0" (
-    pause
-)
+echo ============================================================
+echo Signaling server stopped.
+echo ngrok stopped.
+echo All resources cleaned successfully.
+echo ============================================================
+echo.
+timeout /t 3 >nul

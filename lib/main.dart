@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'database/database_helper.dart';
@@ -10,6 +12,7 @@ import 'screens/prasad_dengani_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/vargani_screen.dart';
 import 'services/auth_service.dart';
+import 'services/remote_sync_service.dart';
 import 'services/signaling_service.dart';
 import 'services/update_service.dart';
 
@@ -192,14 +195,38 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
+  StreamSubscription? _syncSub;
+  bool _isManualSyncing = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
+    RemoteSyncService.instance.initialize();
+    _syncSub = RemoteSyncService.instance.onSyncCompleted.listen((_) {
+      if (mounted) setState(() {});
+    });
+    _checkAndTriggerInitialSyncIfNeeded();
     if (widget.checkUpdateOnStartup) {
       _checkStartupUpdate();
     }
+  }
+
+  Future<void> _checkAndTriggerInitialSyncIfNeeded() async {
+    try {
+      if (RemoteSyncService.instance.isMaster) return;
+      if (!AuthService.instance.canView) return;
+
+      final counts = await DatabaseHelper.instance.getTableRecordCounts();
+      final hasRecords = counts.values.any((c) => c > 0);
+      if (!hasRecords) {
+        // Automatically request initial sync for approved new phone
+        await RemoteSyncService.instance.requestSyncFromMaster(
+          timeout: const Duration(seconds: 8),
+        );
+      }
+    } catch (_) {}
   }
 
   Future<void> _checkStartupUpdate() async {
@@ -345,8 +372,89 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
+  Future<void> _handleManualSync() async {
+    if (_isManualSyncing) return;
+    final auth = AuthService.instance;
+    if (!auth.canView) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('माहिती पाहण्याची किंवा सिंक करण्याची परवानगी नाही.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (RemoteSyncService.instance.isMaster) {
+      final counts = await DatabaseHelper.instance.getTableRecordCounts();
+      if (!mounted) return;
+      final total = counts.values.fold<int>(0, (a, b) => a + b);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('हा फोन MASTER डेटाबेस आहे. सर्व $total नोंदी सुरक्षित आहेत.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isManualSyncing = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            SizedBox(width: 12),
+            Text('मास्टर फोनवरून डेटा सिंक करत आहे...'),
+          ],
+        ),
+        duration: Duration(seconds: 4),
+      ),
+    );
+
+    try {
+      final success = await RemoteSyncService.instance.requestSyncFromMaster();
+      if (!mounted) return;
+      if (success) {
+        final counts = await DatabaseHelper.instance.getTableRecordCounts();
+        if (!mounted) return;
+        final total = counts.values.fold<int>(0, (a, b) => a + b);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('डेटा सिंक यशस्वी! एकूण $total नोंदी स्थानिक डेटाबेसमध्ये सुरक्षित झाल्या.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        setState(() {});
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(RemoteSyncService.instance.syncStatusText.value),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('सिंक त्रुटी: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isManualSyncing = false);
+    }
+  }
+
   @override
   void dispose() {
+    _syncSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -490,6 +598,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               );
             },
+          ),
+          IconButton(
+            icon: _isManualSyncing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _deepSaffron,
+                    ),
+                  )
+                : const Icon(Icons.sync_rounded),
+            tooltip: 'मास्टर फोनवरून डेटा सिंक करा',
+            onPressed: _handleManualSync,
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),

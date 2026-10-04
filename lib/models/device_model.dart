@@ -186,17 +186,20 @@ class DeviceRequestModel {
   }
 
   factory DeviceRequestModel.fromMap(Map<String, dynamic> map) {
+    final created = (map['createdAt'] ?? map['created_at'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch;
+    final updated = (map['updatedAt'] ?? map['updated_at'] as num?)?.toInt() ?? created;
+
     return DeviceRequestModel(
-      requestId: map['request_id'] as String,
-      userId: (map['user_id'] as String?) ?? '',
-      userName: (map['user_name'] as String?) ?? '',
-      deviceId: (map['device_id'] as String?) ?? '',
-      deviceName: (map['device_name'] as String?) ?? 'Unknown Device',
-      requestType: (map['request_type'] as String?) ?? 'NEW_DEVICE',
+      requestId: (map['requestId'] ?? map['request_id'] ?? '') as String,
+      userId: (map['userId'] ?? map['user_id'] ?? '') as String,
+      userName: (map['userName'] ?? map['user_name'] ?? '') as String,
+      deviceId: (map['deviceId'] ?? map['device_id'] ?? '') as String,
+      deviceName: (map['deviceName'] ?? map['device_name'] ?? 'Unknown Device') as String,
+      requestType: (map['requestType'] ?? map['request_type'] ?? 'NEW_DEVICE') as String,
       status: (map['status'] as String?) ?? DeviceStatus.pending,
-      requestedRole: map['requested_role'] as String?,
-      createdAt: (map['created_at'] as num).toInt(),
-      updatedAt: (map['updated_at'] as num).toInt(),
+      requestedRole: (map['requestedRole'] ?? map['requested_role']) as String?,
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 }

@@ -236,7 +236,7 @@ class WebRtcSyncService {
 
   /// Safely applies sync package with automatic rollback on error
   Future<bool> applySyncPackageSafely(Map<String, dynamic> package) async {
-    if (!AuthService.instance.canSync) {
+    if (!AuthService.instance.canSync && !AuthService.instance.canView) {
       throw StateError('डेटा सिंक करण्याची परवानगी (Sync Permission) नाही.');
     }
 
@@ -260,6 +260,87 @@ class WebRtcSyncService {
 
     if (!success) {
       throw StateError('डेटाबेस ट्रॅन्झॅक्शन अयशस्वी झाले. आधीचा डेटा सुरक्षित ठेवला आहे.');
+    }
+
+    return true;
+  }
+
+  // ============================================================
+  // INCREMENTAL / DELTA SYNC (MINIMAL NETWORK DATA USAGE)
+  // ============================================================
+
+  /// Creates a lightweight delta sync package containing only changed records
+  Future<Map<String, dynamic>> prepareDeltaSyncPackage({Map<String, int>? lastKnownIds}) async {
+    if (!isMaster) {
+      throw StateError('केवळ मुख्य चालू खजानी किंवा Developer डेटा सिंक पाठवू शकतात.');
+    }
+
+    final deltaSnapshot = await DatabaseHelper.instance.createDeltaSnapshot(lastKnownIds: lastKnownIds);
+    final jsonString = jsonEncode(deltaSnapshot);
+    final digest = sha256.convert(utf8.encode(jsonString)).toString();
+    final counts = await DatabaseHelper.instance.getTableRecordCounts();
+
+    return {
+      'sync_id': 'delta_sync_${DateTime.now().millisecondsSinceEpoch}',
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'master_device_id': await DeviceService.instance.getDeviceId(),
+      'payload_digest': digest,
+      'is_delta': true,
+      'delta_record_count': deltaSnapshot['totalDeltaCount'] ?? 0,
+      'record_counts': counts,
+      'snapshot': deltaSnapshot,
+    };
+  }
+
+  /// Validates incoming delta sync package
+  bool validateDeltaSyncPackage(Map<String, dynamic> package) {
+    try {
+      if (!package.containsKey('snapshot') ||
+          !package.containsKey('payload_digest') ||
+          !package.containsKey('sync_id')) {
+        return false;
+      }
+
+      final snapshot = package['snapshot'] as Map<String, dynamic>;
+      final expectedDigest = package['payload_digest'] as String;
+
+      final jsonString = jsonEncode(snapshot);
+      final computedDigest = sha256.convert(utf8.encode(jsonString)).toString();
+
+      if (computedDigest != expectedDigest) {
+        return false;
+      }
+
+      final tables = snapshot['tables'] as Map<String, dynamic>?;
+      return tables != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Safely applies delta sync package without wiping existing records
+  Future<bool> applyDeltaSyncPackageSafely(Map<String, dynamic> package) async {
+    if (!AuthService.instance.canSync && !AuthService.instance.canView) {
+      throw StateError('डेटा सिंक करण्याची परवानगी (Sync Permission) नाही.');
+    }
+
+    if (!validateDeltaSyncPackage(package)) {
+      throw const FormatException('डेल्टा सिंक पॅकेज अवैध किंवा दूषित आहे. ट्रान्सफर रद्द केले.');
+    }
+
+    final syncId = package['sync_id'] as String? ?? 'delta_sync_${DateTime.now().millisecondsSinceEpoch}';
+    final snapshot = package['snapshot'] as Map<String, dynamic>;
+    final tables = Map<String, dynamic>.from(snapshot['tables'] as Map);
+    final digest = package['payload_digest'] as String;
+
+    final success = await DatabaseHelper.instance.importDeltaSnapshot(
+      syncId: syncId,
+      deltaTables: tables,
+      payloadDigest: digest,
+    );
+
+    if (!success) {
+      throw StateError('डेल्टा सिंक अयशस्वी झाले.');
     }
 
     return true;

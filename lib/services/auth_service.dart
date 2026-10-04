@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:convert';
 import 'dart:math';
 
@@ -237,6 +238,36 @@ class AuthService {
         _currentUser = null;
         await _clearSession(db);
       }
+
+      if (_currentUser == null) {
+        // App Restart Fallback: If device is approved and has an approved user in local DB, restore session
+        final approvedReq = await DeviceService.instance.getLatestApprovedRequest();
+        if (approvedReq != null && approvedReq.userId.isNotEmpty) {
+          final fallbackRows = await db.query(
+            'khajani_users',
+            where: 'user_id = ? AND status = ?',
+            whereArgs: [approvedReq.userId, KhajaniStatus.approved],
+            limit: 1,
+          );
+          if (fallbackRows.isNotEmpty) {
+            final user = KhajaniUser.fromMap(fallbackRows.first);
+            if (user.isActive && user.isApproved) {
+              _currentUser = user;
+              final now = DateTime.now().millisecondsSinceEpoch;
+              await db.insert(
+                'khajani_session',
+                {
+                  'id': 1,
+                  'user_id': user.userId,
+                  'keep_logged_in': 1,
+                  'logged_in_at': now,
+                },
+                conflictAlgorithm: ConflictAlgorithm.replace,
+              );
+            }
+          }
+        }
+      }
     } catch (_) {
       _currentUser = null;
     }
@@ -448,9 +479,15 @@ class AuthService {
         requestedRole: KhajaniRole.oldKhajani,
       );
 
-      if (SignalingService.instance.isConnected) {
-        SignalingService.instance.sendDeviceRequest(devReq);
-      }
+      // Dispatch request via signaling service (connects on demand if internet available, offline safe)
+      SignalingService.instance.sendDeviceRequest(devReq);
+      SignalingService.instance.registerClient(
+        role: 'CLIENT',
+        deviceId: devReq.deviceId,
+        userId: devReq.userId,
+        userName: devReq.userName,
+        requestId: devReq.requestId,
+      );
     } catch (_) {}
 
     return user;
@@ -676,6 +713,7 @@ class AuthService {
     required String role,
     required KhajaniPermissions permissions,
     String? deviceId,
+    String? requestId,
   }) async {
     _assertIsDeveloper();
 
@@ -689,16 +727,51 @@ class AuthService {
       throw ArgumentError('अवैध भूमिका (Invalid Role).');
     }
 
-    final targetUser = await getKhajaniById(userId);
-    if (targetUser == null) {
-      throw StateError('वापरकर्ता सापडला नाही.');
-    }
-    if (targetUser.isDeveloper) {
-      throw StateError('Developer खात्यात बदल करता येत नाही.');
-    }
-
     final db = await DatabaseHelper.instance.database;
     final now = DateTime.now().millisecondsSinceEpoch;
+
+    var targetUser = await getKhajaniById(userId);
+
+    // If targetUser is null, find in device_requests and create account entry
+    if (targetUser == null) {
+      final reqs = await DeviceService.instance.getDeviceRequests();
+      final match = reqs.firstWhere(
+        (r) => r.userId == userId || (requestId != null && r.requestId == requestId),
+        orElse: () => DeviceRequestModel(
+          requestId: requestId ?? 'req_$now',
+          userId: userId,
+          userName: 'नवीन वापरकर्ता',
+          deviceId: deviceId ?? '',
+          deviceName: 'Android Phone',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+
+      final salt = generateSalt();
+      targetUser = KhajaniUser(
+        userId: userId,
+        name: match.userName,
+        passwordHash: '',
+        salt: salt,
+        role: role,
+        status: KhajaniStatus.approved,
+        isActive: true,
+        permissions: permissions,
+        createdAt: match.createdAt,
+        updatedAt: now,
+      );
+
+      await db.insert(
+        'khajani_users',
+        targetUser.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      if (targetUser.isDeveloper) {
+        throw StateError('Developer खात्यात बदल करता येत नाही.');
+      }
+    }
 
     await db.transaction((txn) async {
       // If approved as LATEST_KHAJANI, demote existing LATEST_KHAJANI to OLD_KHAJANI
@@ -746,7 +819,7 @@ class AuthService {
     // Update device request and device status locally
     try {
       final requests = await DeviceService.instance.getDeviceRequests();
-      final matchingReq = requests.where((r) => r.userId == userId).toList();
+      final matchingReq = requests.where((r) => r.userId == userId || (requestId != null && r.requestId == requestId)).toList();
       for (final req in matchingReq) {
         await DeviceService.instance.updateDeviceRequestStatus(req.requestId, DeviceStatus.approved);
         if (req.deviceId.isNotEmpty) {
@@ -757,20 +830,204 @@ class AuthService {
         await DeviceService.instance.approveDevice(deviceId);
       }
 
-      // Notify through PC Signaling Server if connected
-      if (SignalingService.instance.isConnected) {
-        final targetDev = deviceId ?? (matchingReq.isNotEmpty ? matchingReq.first.deviceId : '');
-        final reqId = matchingReq.isNotEmpty ? matchingReq.first.requestId : 'req_$userId';
-        SignalingService.instance.sendDeviceApproval(
-          requestId: reqId,
-          deviceId: targetDev,
-          userId: userId,
-          status: KhajaniStatus.approved,
-          role: role,
-          permissions: permissions,
+      // Notify through PC Signaling Server
+      final targetDev = (deviceId != null && deviceId.isNotEmpty && deviceId != 'N/A')
+          ? deviceId
+          : (matchingReq.isNotEmpty ? matchingReq.first.deviceId : '');
+      final reqId = (requestId != null && requestId.isNotEmpty)
+          ? requestId
+          : (matchingReq.isNotEmpty ? matchingReq.first.requestId : 'req_$userId');
+
+      // STEP 1: DEVELOPER_APPROVED
+      print('[DEVELOPER_APPROVED] requestId=$reqId userId=$userId deviceId=$targetDev status=APPROVED');
+
+      // STEP 2: APPROVAL_SENT_TO_SERVER logged inside sendDeviceApproval
+      SignalingService.instance.sendDeviceApproval(
+        requestId: reqId,
+        deviceId: targetDev,
+        userId: userId,
+        status: KhajaniStatus.approved,
+        role: role,
+        permissions: permissions,
+      );
+    } catch (_) {}
+  }
+
+  /// Helper to apply approved status to local SQLite database and refresh session
+  Future<void> applyApprovalLocally({
+    required String requestId,
+    required String userId,
+    required String deviceId,
+    required String role,
+    Map<String, dynamic>? permissionsMap,
+  }) async {
+    final db = await DatabaseHelper.instance.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await db.transaction((txn) async {
+      // 1. Update device_requests
+      if (requestId.isNotEmpty) {
+        await txn.update(
+          'device_requests',
+          {'status': 'APPROVED', 'updated_at': now},
+          where: 'request_id = ?',
+          whereArgs: [requestId],
+        );
+      } else if (userId.isNotEmpty) {
+        await txn.update(
+          'device_requests',
+          {'status': 'APPROVED', 'updated_at': now},
+          where: 'user_id = ?',
+          whereArgs: [userId],
         );
       }
-    } catch (_) {}
+
+      // 2. Update khajani_users
+      if (userId.isNotEmpty) {
+        final updateData = <String, dynamic>{
+          'role': role,
+          'status': 'APPROVED',
+          'is_active': 1,
+          'updated_at': now,
+        };
+        if (permissionsMap != null) {
+          updateData.addAll(permissionsMap);
+        }
+
+        final existing = await txn.query(
+          'khajani_users',
+          where: 'user_id = ?',
+          whereArgs: [userId],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) {
+          await txn.update(
+            'khajani_users',
+            updateData,
+            where: 'user_id = ?',
+            whereArgs: [userId],
+          );
+        } else {
+          final reqRows = await txn.query(
+            'device_requests',
+            where: 'user_id = ?',
+            whereArgs: [userId],
+            limit: 1,
+          );
+          final userName = reqRows.isNotEmpty
+              ? (reqRows.first['user_name'] as String? ?? 'नवीन वापरकर्ता')
+              : 'नवीन वापरकर्ता';
+          final salt = generateSalt();
+          updateData['user_id'] = userId;
+          updateData['name'] = userName;
+          updateData['password_hash'] = '';
+          updateData['salt'] = salt;
+          updateData['created_at'] = now;
+          await txn.insert(
+            'khajani_users',
+            updateData,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      }
+
+      // 3. Update devices
+      if (deviceId.isNotEmpty) {
+        await txn.update(
+          'devices',
+          {'status': 'APPROVED', 'updated_at': now, 'last_seen_at': now},
+          where: 'device_id = ?',
+          whereArgs: [deviceId],
+        );
+      }
+
+      // 4. Update session
+      if (userId.isNotEmpty) {
+        await txn.insert(
+          'khajani_session',
+          {
+            'id': 1,
+            'user_id': userId,
+            'keep_logged_in': 1,
+            'logged_in_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+
+    // STEP 7 LOG
+    print('[NEW_PHONE_SAVED_APPROVAL_TO_SQLITE] requestId=$requestId userId=$userId deviceId=$deviceId status=APPROVED');
+
+    // STEP 8
+    await initSession();
+    print('[NEW_PHONE_REFRESHED_SESSION] requestId=$requestId userId=$userId deviceId=$deviceId status=APPROVED');
+  }
+
+  // ============================================================
+  // DEVELOPER: REJECT OR DELETE REQUEST
+  // ============================================================
+
+  Future<void> rejectOrDeleteRequest({
+    required String requestId,
+    required String userId,
+    String? deviceId,
+  }) async {
+    _assertIsDeveloper();
+    final db = await DatabaseHelper.instance.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // Delete or mark rejected in device_requests
+    await DeviceService.instance.deleteDeviceRequest(requestId);
+
+    // If there is a pending user in khajani_users, remove
+    if (userId.isNotEmpty && userId != developerUserId) {
+      final user = await getKhajaniById(userId);
+      if (user != null && user.isPending) {
+        await db.delete('khajani_users', where: 'user_id = ?', whereArgs: [userId]);
+      }
+    }
+
+    if (deviceId != null && deviceId.isNotEmpty) {
+      await db.update(
+        'devices',
+        {'status': DeviceStatus.rejected, 'updated_at': now},
+        where: 'device_id = ?',
+        whereArgs: [deviceId],
+      );
+    }
+
+    // Send rejection signal
+    if (SignalingService.instance.isConnected) {
+      SignalingService.instance.sendDeviceRejection(
+        requestId: requestId,
+        deviceId: deviceId ?? '',
+        userId: userId,
+      );
+    }
+  }
+
+  // ============================================================
+  // SECOND DEVICE REQUEST
+  // ============================================================
+
+  Future<DeviceRequestModel> requestNewDevice({
+    required String userId,
+    required String userName,
+    String? requestedRole,
+  }) async {
+    final devReq = await DeviceService.instance.createDeviceRequest(
+      userId: userId,
+      userName: userName,
+      requestType: 'NEW_DEVICE',
+      requestedRole: requestedRole ?? KhajaniRole.oldKhajani,
+    );
+
+    if (!SignalingService.instance.isConnected) {
+      SignalingService.instance.connect();
+    }
+    SignalingService.instance.sendDeviceRequest(devReq);
+    return devReq;
   }
 
   Future<void> updateKhajaniRole({

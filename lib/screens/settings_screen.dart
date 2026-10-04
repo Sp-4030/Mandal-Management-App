@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../database/database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/device_service.dart';
+import '../services/remote_sync_service.dart';
 import '../services/signaling_service.dart';
 import 'app_update_screen.dart';
 import 'khajani_management_screen.dart';
@@ -59,6 +60,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (_) {
       if (mounted) setState(() => _isLoadingLastBackup = false);
+    }
+  }
+
+  bool _isSyncingFinancial = false;
+
+  Future<void> _handleRemoteFinancialSync() async {
+    if (!_authService.canView && !_authService.canSync && !_authService.isDeveloper) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('माहिती पाहण्याची किंवा सिंक करण्याची परवानगी नाही.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (RemoteSyncService.instance.isMaster) {
+      final counts = await _databaseHelper.getTableRecordCounts();
+      if (!mounted) return;
+      final total = counts.values.fold<int>(0, (a, b) => a + b);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('हा फोन MASTER डेटाबेस आहे. सर्व $total नोंदी सुरक्षित आहेत.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSyncingFinancial = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            SizedBox(width: 12),
+            Text('मास्टर फोनवरून सर्व आर्थिक नोंदी सिंक करत आहे...'),
+          ],
+        ),
+        duration: Duration(seconds: 4),
+      ),
+    );
+
+    try {
+      final success = await RemoteSyncService.instance.requestSyncFromMaster();
+      if (!mounted) return;
+      if (success) {
+        final counts = await _databaseHelper.getTableRecordCounts();
+        if (!mounted) return;
+        final total = counts.values.fold<int>(0, (a, b) => a + b);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('डेटा सिंक यशस्वी! एकूण $total नोंदी स्थानिक डेटाबेसमध्ये सुरक्षित झाल्या.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        setState(() {});
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(RemoteSyncService.instance.syncStatusText.value),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('सिंक त्रुटी: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSyncingFinancial = false);
     }
   }
 
@@ -205,14 +285,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
               const Text(
-                'PC वरील WebSocket Signaling Server URL:\n(उदा: ws://192.168.1.100:8080 किंवा बोगदा ws://xxxx.ngrok-free.app)',
+                'PC वरील WebSocket Signaling Server URL:\n(उदा: wss://amino-dropkick-resample.ngrok-free.dev किंवा ws://10.X.X.X:8080)',
                 style: TextStyle(fontSize: 12, color: Color(0xFF756A5D)),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: urlController,
                 decoration: const InputDecoration(
-                  hintText: 'ws://192.168.1.X:8080',
+                  hintText: 'wss://amino-dropkick-resample.ngrok-free.dev',
                   isDense: true,
                 ),
               ),
@@ -567,7 +647,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
 
-          // 3.2 Device Info Tile
+          // 3.2 रिमोट डेटा सिंक (Master DB Sync) Tile
+          _settingsOptionTile(
+            context: context,
+            icon: Icons.cloud_sync_outlined,
+            title: 'रिमोट डेटा सिंक (Master DB Sync)',
+            description: RemoteSyncService.instance.isMaster
+                ? 'हा फोन MASTER डेटाबेस आहे. इतर फोनला इथून डेटा मिळतो.'
+                : 'Master फोनवरून सर्व आर्थिक नोंदी स्थानिक SQLite मध्ये सुरक्षितपणे सिंक करा.',
+            badge: _isSyncingFinancial
+                ? 'सिंक चालू...'
+                : (RemoteSyncService.instance.isMaster ? 'Master Phone 👑' : 'Target Phone 📱'),
+            onTap: () {
+              if (!_isSyncingFinancial) {
+                _handleRemoteFinancialSync();
+              }
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // 3.3 Device Info Tile
           _settingsOptionTile(
             context: context,
             icon: Icons.perm_device_information_outlined,

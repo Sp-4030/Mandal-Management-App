@@ -1,249 +1,95 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
-title Hindvi App - PC Signaling Server Manager
-
+title Hindvi Mandal - Signaling Server & Ngrok
 cd /d "%~dp0"
-set SERVER_PORT=8080
 
-rem If direct command-line arguments are passed
-if "%~1"=="--direct" (
-    goto DIRECT_START
-)
-if "%~2"=="--direct" (
-    set SERVER_PORT=%~1
-    goto DIRECT_START
-)
-
-:MENU
-cls
 echo ============================================================
-echo      HINDVI SWARAJYA APP - PC SIGNALING SERVER CONTROL
+echo   HINDVI SWARAJYA MANDAL - SERVER INITIALIZATION
 echo ============================================================
 echo.
 
-rem Check live status of Port 8080
-set CURRENT_PID=
-for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":%SERVER_PORT% " ^| findstr "LISTENING"') do (
-    set CURRENT_PID=%%a
-)
+rem 1. Environment check
+if exist "C:\flutter\bin" set "PATH=%PATH%;C:\flutter\bin"
+if exist "%LOCALAPPDATA%\flutter\bin" set "PATH=%PATH%;%LOCALAPPDATA%\flutter\bin"
+if exist "C:\src\flutter\bin" set "PATH=%PATH%;C:\src\flutter\bin"
 
-if not "!CURRENT_PID!"=="" (
-    echo   CURRENT STATUS: [ Server is ON  🟢 ] (Port: %SERVER_PORT%, PID: !CURRENT_PID!)
-) else (
-    echo   CURRENT STATUS: [ Server is OFF 🔴 ] (Port: %SERVER_PORT%)
-)
-
-echo.
-echo ============================================================
-echo   MENU OPTIONS:
-echo ============================================================
-echo   [1] Press 1 to Start Server
-echo   [2] Press 2 to Stop Server
-echo   [3] Press 3 to Check Server Status
-echo   [4] Press 4 to Exit
-echo ============================================================
-echo.
-
-set CHOICE=
-set /p CHOICE="Enter your choice (1, 2, 3, or 4): "
-
-if "%CHOICE%"=="1" goto START_SERVER
-if "%CHOICE%"=="2" goto STOP_SERVER
-if "%CHOICE%"=="3" goto CHECK_STATUS
-if "%CHOICE%"=="4" goto EXIT_SCRIPT
-
-echo.
-echo [!] Invalid selection "%CHOICE%". Please press 1, 2, 3, or 4.
-ping 127.0.0.1 -n 2 >nul
-goto MENU
-
-:START_SERVER
-echo.
-echo ------------------------------------------------------------
-echo   STARTING SIGNALING SERVER...
-echo ------------------------------------------------------------
-echo.
-
-rem Check if already running
-set RUNNING_PID=
-for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":%SERVER_PORT% " ^| findstr "LISTENING"') do (
-    set RUNNING_PID=%%a
-)
-if not "!RUNNING_PID!"=="" (
-    echo [INFO] Server is ALREADY running on Port %SERVER_PORT%! (PID: !RUNNING_PID!)
-    echo [INFO] Status: Server is ON 🟢
-    echo.
-    pause
-    goto MENU
-)
-
-rem Detect Dart or Python runtime
-set RUNTIME=
-where dart >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    set RUNTIME=dart
-) else (
-    where python >nul 2>nul
-    if %ERRORLEVEL% EQU 0 (
-        set RUNTIME=python
-    ) else (
-        if exist "%LOCALAPPDATA%\flutter\bin\dart.bat" (
-            set PATH=%PATH%;%LOCALAPPDATA%\flutter\bin
-            set RUNTIME=dart
-        ) else (
-            if exist "C:\src\flutter\bin\dart.bat" (
-                set PATH=%PATH%;C:\src\flutter\bin
-                set RUNTIME=dart
-            )
-        )
-    )
-)
-
-if "!RUNTIME!"=="" (
-    echo [ERROR] Neither Dart nor Python was found on this system!
-    echo Please ensure Flutter/Dart SDK or Python 3 is installed.
-    echo.
-    pause
-    goto MENU
-)
-
-echo [OK] Runtime detected: !RUNTIME!
-echo [INFO] Launching server in a dedicated window on Port %SERVER_PORT%...
-
-if "!RUNTIME!"=="dart" (
-    if not exist "server\signaling_server.dart" (
-        echo [ERROR] Server file server\signaling_server.dart not found!
-        echo.
+where dart >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    where python >nul 2>&1
+    if %ERRORLEVEL% NEQ 0 (
+        echo [ERROR] Neither Dart nor Python found in PATH.
+        echo Please ensure Flutter/Dart or Python is installed.
         pause
-        goto MENU
+        exit /b 1
     )
-    start "Hindvi PC Signaling Server (Port %SERVER_PORT%)" cmd /k "title Hindvi PC Signaling Server (Port %SERVER_PORT%) && cd /d "%~dp0" && dart run server/signaling_server.dart %SERVER_PORT%"
+)
+
+set "NGROK_BIN="
+if exist "%~dp0ngrok.exe" (
+    set "NGROK_BIN=%~dp0ngrok.exe"
 ) else (
-    if not exist "server\signaling_server.py" (
-        echo [ERROR] Server file server\signaling_server.py not found!
-        echo.
-        pause
-        goto MENU
-    )
-    start "Hindvi PC Signaling Server (Port %SERVER_PORT%)" cmd /k "title Hindvi PC Signaling Server (Port %SERVER_PORT%) && cd /d "%~dp0" && python server/signaling_server.py %SERVER_PORT%"
+    where ngrok >nul 2>&1
+    if %ERRORLEVEL% EQU 0 set "NGROK_BIN=ngrok"
 )
 
-rem Wait 2 seconds for socket bind
-ping 127.0.0.1 -n 3 >nul
-
-set VERIFY_PID=
-for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":%SERVER_PORT% " ^| findstr "LISTENING"') do (
-    set VERIFY_PID=%%a
+if "%NGROK_BIN%"=="" (
+    echo [ERROR] ngrok.exe not found in project folder or system PATH.
+    pause
+    exit /b 1
 )
 
-if not "!VERIFY_PID!"=="" (
-    echo.
-    echo ============================================================
-    echo   [SUCCESS] Server is ON 🟢
-    echo   Port: %SERVER_PORT% (PID: !VERIFY_PID!)
-    echo ============================================================
-    echo.
-    echo   Local Connection URLs for Hindvi Mobile App:
-    for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /C:"IPv4 Address" /C:"IPv4 पत्ता"') do (
-        echo     - ws:%%i:%SERVER_PORT%
-    )
-    echo.
-    echo   * Dedicated server console window has been opened.
-    echo   * You can press 2 anytime in this menu to Stop the server.
-) else (
-    echo.
-    echo [!] Server process was started. If it didn't stay open, check the server window for any error.
+echo [OK] Environment check passed.
+echo.
+
+rem 2. Stop any previous instances on port 8080 and ngrok
+for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":8080 " ^| findstr "LISTENING"') do (
+    taskkill /f /pid %%a >nul 2>&1
 )
+taskkill /f /im ngrok.exe >nul 2>&1
 
-echo.
-pause
-goto MENU
-
-:STOP_SERVER
-echo.
-echo ------------------------------------------------------------
-echo   STOPPING SIGNALING SERVER...
-echo ------------------------------------------------------------
-echo.
-
-set KILLED=0
-for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":%SERVER_PORT% " ^| findstr "LISTENING"') do (
-    set TARGET_PID=%%a
-    if not "!TARGET_PID!"=="0" (
-        echo [INFO] Found server running on PID: !TARGET_PID!
-        taskkill /f /pid !TARGET_PID! >nul 2>&1
-        if !ERRORLEVEL! EQU 0 (
-            echo [OK] Stopped server process PID !TARGET_PID!.
-            set KILLED=1
-        )
-    )
-)
-
-taskkill /fi "WINDOWTITLE eq Hindvi PC Signaling Server*" /f >nul 2>&1
-
-if "!KILLED!"=="1" (
-    echo.
-    echo ============================================================
-    echo   [SUCCESS] Server is OFF 🔴
-    echo   Signaling server safely stopped.
-    echo ============================================================
-) else (
-    echo [INFO] Server was not running on Port %SERVER_PORT%.
-    echo [INFO] Status: Server is OFF 🔴
-)
-
-echo.
-pause
-goto MENU
-
-:CHECK_STATUS
-echo.
-echo ------------------------------------------------------------
-echo   SERVER STATUS CHECK
-echo ------------------------------------------------------------
-echo.
-
-set CHK_PID=
-for /f "tokens=5" %%a in ('netstat -ano -p tcp ^| findstr /C:":%SERVER_PORT% " ^| findstr "LISTENING"') do (
-    set CHK_PID=%%a
-)
-
-if not "!CHK_PID!"=="" (
-    echo ============================================================
-    echo   STATUS: Server is ON 🟢
-    echo   PORT:   %SERVER_PORT%
-    echo   PID:    !CHK_PID!
-    echo ============================================================
-    echo.
-    echo   Local Connection URLs for Hindvi Mobile App:
-    for /f "tokens=2 delims=:" %%i in ('ipconfig ^| findstr /C:"IPv4 Address" /C:"IPv4 पत्ता"') do (
-        echo     - ws:%%i:%SERVER_PORT%
-    )
-) else (
-    echo ============================================================
-    echo   STATUS: Server is OFF 🔴
-    echo   PORT:   %SERVER_PORT% (Not active)
-    echo ============================================================
-    echo.
-    echo   Press 1 to start the server.
-)
-
-echo.
-pause
-goto MENU
-
-:DIRECT_START
-echo Starting server directly on port %SERVER_PORT%...
-where dart >nul 2>nul
+rem 3. Start WebSocket server on Port 8080
+where dart >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    dart run server/signaling_server.dart %SERVER_PORT%
+    start /b cmd /c "dart run server/signaling_server.dart 8080"
 ) else (
-    python server/signaling_server.py %SERVER_PORT%
+    start /b cmd /c "python server/signaling_server.py 8080"
 )
-exit /b %ERRORLEVEL%
 
-:EXIT_SCRIPT
+rem Wait 2 seconds for server startup
+timeout /t 2 /nobreak >nul
+
+rem 4. Start ngrok tunnel
+start /b cmd /c ""%NGROK_BIN%" http 8080 --log=stdout > ngrok.log 2>&1"
+
+rem 5. Detect Public URL via ngrok local API (up to 12 attempts)
+set "PUBLIC_URL="
+for /l %%i in (1,1,12) do (
+    if "!PUBLIC_URL!"=="" (
+        for /f "usebackq delims=" %%u in (`powershell -NoProfile -Command "try { $res = Invoke-RestMethod -Uri 'http://127.0.0.1:4040/api/tunnels' -TimeoutSec 1; $url = $res.tunnels[0].public_url; if ($url) { $url -replace '^http', 'ws' } } catch {}" 2^>nul`) do (
+            set "PUBLIC_URL=%%u"
+        )
+        if not "!PUBLIC_URL!"=="" goto :url_found
+        timeout /t 1 /nobreak >nul
+    )
+)
+
+:url_found
+if "%PUBLIC_URL%"=="" (
+    set "PUBLIC_URL=wss://amino-dropkick-resample.ngrok-free.dev"
+)
+
 echo.
-echo Exiting Hindvi Server Manager.
-exit /b 0
+echo ============================================================
+echo Server Started
+echo Local Server: 127.0.0.1
+echo Port: 8080
+echo ngrok Started
+echo Public URL: %PUBLIC_URL%
+echo Waiting for connections...
+echo ============================================================
+echo.
+echo * Keep this CMD window open while using Hindvi App remote features.
+echo * To stop the server cleanly, double-click 'Stop Server.cmd'.
+echo.
+
+rem Keep window open and wait
+cmd /k
