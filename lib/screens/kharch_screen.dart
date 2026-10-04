@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
 import '../services/auth_service.dart';
+import '../services/remote_sync_service.dart';
 import '../utils/record_delete.dart';
 
 class KharchScreen extends StatefulWidget {
@@ -15,6 +17,7 @@ class KharchScreen extends StatefulWidget {
 class _KharchScreenState extends State<KharchScreen> {
   final DatabaseHelper db = DatabaseHelper.instance;
   final AuthService _authService = AuthService.instance;
+  StreamSubscription? _syncSub;
 
   late int previousYear;
 
@@ -32,6 +35,23 @@ class _KharchScreenState extends State<KharchScreen> {
     if (widget.initialLoading) {
       loadData();
     }
+
+    _syncSub = RemoteSyncService.instance.onFinancialChange.listen((change) {
+      final table = (change['tableName'] ?? change['table']) as String?;
+      if (table == 'kharch' || table == null) {
+        if (mounted) {
+          debugPrint(
+              '[UI_REFRESHED] table=kharch recordId=${change['recordId']} operation=${change['operation']}');
+          loadData();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSub?.cancel();
+    super.dispose();
   }
 
   // ============================================================

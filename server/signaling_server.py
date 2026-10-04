@@ -344,8 +344,28 @@ async def main():
                                     print(f"[SERVER_FORWARDED] Delivered sync data to targetDeviceId={target}")
                                     break
 
+                    elif msg_type == "financial_change":
+                        change_id = data.get("changeId", "")
+                        table_name = data.get("tableName", "")
+                        operation = data.get("operation", "")
+                        from_dev = data.get("deviceId") or client_info.get("deviceId", "")
+                        print(f"[SERVER_RECEIVED] changeId={change_id} table={table_name} op={operation} from={from_dev}")
+                        forwarded_count = 0
+                        for ws, info in clients.items():
+                            if ws != websocket and info.get("deviceId") != from_dev:
+                                await ws.send(json.dumps(data))
+                                forwarded_count += 1
+                                print(f"[SERVER_FORWARDED] changeId={change_id} table={table_name} to={info.get('deviceId')}")
+                        await websocket.send(json.dumps({
+                            "type": "sync_ack",
+                            "changeId": change_id,
+                            "status": "SERVER_RECEIVED",
+                            "forwardedCount": forwarded_count,
+                            "timestamp": int(datetime.now().timestamp() * 1000)
+                        }))
+
                     elif msg_type in ("sync_chunk", "sync_ack"):
-                        target = data.get("to")
+                        target = data.get("to") or data.get("toDeviceId")
                         if target:
                             for ws, info in clients.items():
                                 if info.get("deviceId") == target:

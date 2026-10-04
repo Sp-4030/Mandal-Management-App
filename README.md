@@ -1,64 +1,65 @@
 # Hindvi Swarajya Mandal Management (हिंदवी स्वराज्य मंडळ व्यवस्थापन)
 
-A secure, offline-first Flutter application for managing Ganeshotsav / Mandal collections, contributions, market expenses, and generating Devanagari annual financial reports.
+A secure, offline-first Flutter application for managing Ganeshotsav / Mandal collections, contributions, market expenses, and generating Devanagari annual financial reports with two-way real-time and offline synchronization across authorized devices.
 
 ---
 
 ## 📌 Overview
 
-Hindvi-App delivers a distributed architecture where:
-- **Latest Khajani Phone = MASTER SQLite Financial Database** (`hindvi_latest.db`).
-- **PC = Signaling & Communication Relay Server** (WebSocket / ngrok). **NO financial data is stored on the PC disk.**
-- **Target Phones (Developer, Old Khajani, New Khajani)** = Granted granular role-based permissions (`canView`, `canSearch`, `canPdf`, `canAdd`, `canEdit`, `canDelete`, `canSync`).
-- **100% Offline First** = Once synced, all tables, search functionality, and Annual Report PDF generation operate strictly offline without internet or server access.
+Hindvi-App delivers a distributed, offline-first architecture where:
+- **Phone Local SQLite Databases (`hindvi_latest.db`)**: Every phone holds its own complete local SQLite database.
+- **PC = WebSocket Communication & Signaling Relay Server (Port 8080 / ngrok)**: **NO financial data is stored on the PC disk.** The PC serves exclusively as a signaling router, connection manager, and message relay.
+- **Two-Way Financial Synchronization (Two-Way Delta Sync)**: Financial changes (Add/Edit/Delete) created on the Latest Khajani phone synchronize in real time to all authorized phones. Conversely, allowed changes made on authorized phones (with developer-granted Edit permissions) synchronize back to the Latest Khajani phone and all other authorized phones.
+- **100% Offline-First**: When a phone is offline, changes are committed to the local SQLite database in an atomic transaction and recorded in the local `sync_queue`. Once internet connectivity is restored, pending changes automatically flush through the WebSocket relay.
+- **All 7 Financial Tables Synchronized Across All Years**:
+  1. `vargani` (वर्गणी)
+  2. `prasad_dengani` (प्रसाद देणगी)
+  3. `prasad_sahitya` (प्रसाद साहित्य)
+  4. `aarti_vargani` (आरती वर्गणी)
+  5. `kharch` (खर्च)
+  6. `mahaprasad_kharch` (महाप्रसाद खर्च)
+  7. `previous_balance` (मागील शिल्लक)
+- **Deterministic Conflict Handling**: Automatic and deterministic resolution rule (`version` $\rightarrow$ `changedAt` $\rightarrow$ `deviceId`), with full audit trail logging in `sync_conflicts`.
+- **Tombstone-Based Delete Sync**: Deleting a record updates `sync_tombstones` to prevent resurrecting deleted records during subsequent synchronizations.
+- **Granular Role-Based Permissions**: Developer approves devices with specific capabilities (`canView`, `canSearch`, `canPdf`, `canAdd`, `canEdit`, `canDelete`, `canSync`).
 
 ---
 
 ## 🏗️ Low-Level Design (LLD) Diagrams
 
-### 1. High-Level Architecture & End-to-End Data Flow
+### 1. High-Level Architecture & Two-Way Data Flow
 
 ```mermaid
 flowchart TD
-    subgraph MasterDevice["Master Phone (Latest Khajani)"]
-        M_DB[("Local SQLite Master<br/>hindvi_latest.db")]
-        M_Sync[RemoteSyncService<br/>Master Listener]
-        M_Auth[AuthService<br/>Role: LATEST_KHAJANI]
+    subgraph PhoneA["Phone A (Latest Khajani / Authorized Phone)"]
+        A_UI["User Action (Add / Edit / Delete)"]
+        A_DB[("Local SQLite Transaction<br/>hindvi_latest.db")]
+        A_Queue[("Local Sync Queue<br/>status: PENDING")]
+        A_Sync["RemoteSyncService"]
     end
 
-    subgraph ServerRelay["PC WebSocket Relay Server"]
-        WS_Server["Signaling Server (Port 8080 / ngrok)<br/>In-Memory Session Router"]
-        WS_Zero["Zero Disk Storage<br/>(No financial data saved on PC)"]
+    subgraph ServerRelay["PC WebSocket Relay Server (Signaling Only)"]
+        WS_Server["Signaling Server (Port 8080 / ngrok)<br/>In-Memory Routing"]
+        WS_Zero["Zero Disk Storage<br/>(No Financial Data on PC)"]
     end
 
-    subgraph DeveloperDevice["Developer Device"]
-        Dev_UI["Approval & Role Control"]
-        Dev_Auth["AuthService<br/>Role: DEVELOPER"]
+    subgraph PhoneB["Phone B (Other Authorized Phone)"]
+        B_Sync["RemoteSyncService"]
+        B_DB[("Local SQLite Transaction<br/>hindvi_latest.db")]
+        B_UI["Real-Time UI Refresh"]
     end
 
-    subgraph TargetDevice["Target Phone (Old/New Khajani)"]
-        T_UI["Forms / Tables / PDF Viewer"]
-        T_Auth["AuthService<br/>Permissions Check"]
-        T_Sync["RemoteSyncService<br/>Target Requester"]
-        T_DB[("Local SQLite Target<br/>hindvi_latest.db")]
-    end
-
-    %% Device Approval Flow
-    T_UI -- "1. Request Device Approval" --> WS_Server
-    WS_Server -- "2. Forward Pending Request" --> Dev_UI
-    Dev_UI -- "3. Approve + Assign Permissions" --> WS_Server
-    WS_Server -- "4. Deliver Approval Result" --> T_UI
-
-    %% Financial Data Sync Flow
-    T_UI -- "5. Request Financial Sync" --> T_Sync
-    T_Sync -- "6. Send sync_request" --> WS_Server
-    WS_Server -- "7. Relay to Master Phone" --> M_Sync
-    M_Sync -- "8. Read All Years & Tables" --> M_DB
-    M_Sync -- "9. SHA-256 Digest & Chunking" --> WS_Server
-    WS_Server -- "10. In-Memory Relay (sync_data)" --> T_Sync
-    T_Sync -- "11. Validate SHA-256 Digest" --> T_Sync
-    T_Sync -- "12. Atomic Transaction (Rollback on error)" --> T_DB
-    T_DB -- "13. Offline Data Available" --> T_UI
+    %% Change Flow
+    A_UI -->|"1. User creates change"| A_DB
+    A_DB -->|"2. [LOCAL_DB_COMMITTED]"| A_Queue
+    A_Queue -->|"3. [SYNC_SENT]"| A_Sync
+    A_Sync -->|"4. financial_change via WebSocket"| WS_Server
+    WS_Server -->|"5. [SERVER_RECEIVED] & [SERVER_FORWARDED]"| B_Sync
+    B_Sync -->|"6. [TARGET_VALIDATED] & [TARGET_DB_COMMITTED]"| B_DB
+    B_DB -->|"7. [UI_REFRESHED]"| B_UI
+    B_Sync -->|"8. [SYNC_ACK_SENT]"| WS_Server
+    WS_Server -->|"9. Relay ACK"| A_Sync
+    A_Sync -->|"10. [SYNC_QUEUE_COMPLETED]"| A_Queue
 ```
 
 ---
@@ -69,41 +70,36 @@ flowchart TD
 classDiagram
     class DatabaseHelper {
         +Database database
-        +createFinancialSnapshot() Map
-        +createDeltaSnapshot(lastKnownIds) Map
-        +importFinancialSnapshot(syncId, tables, digest) bool
-        +importDeltaSnapshot(syncId, deltaTables, digest) bool
-        +getTableRecordCounts() Map~String, int~
-        +getLatestKnownIds() Map~String, int~
-        -_assertCanAdd()
-        -_assertCanEdit()
-        -_assertCanDelete()
-        -_assertCanSyncData()
+        +applyIncomingFinancialChange(...) Future~bool~
+        +getPendingSyncQueue() Future~List~
+        +markSyncQueueCompleted(changeId) Future~int~
+        +updateSyncQueueStatus(changeId, status) Future~int~
+        +resolveConflict(...) ConflictResolution
+        +getSyncConflicts() Future~List~
+        +exportDatabaseForRemoteSync(...) Future~Map~
+        +importDatabaseFromRemoteSync(...) Future~bool~
+        +getTableRecordCounts() Future~Map~
+        -_recordChangeInTxn(...) Future~void~
+        -_recordDeleteInTxn(...) Future~void~
     }
 
     class RemoteSyncService {
         +isMaster: bool
-        +isSyncing: ValueNotifier~bool~
-        +syncStatusText: ValueNotifier~String~
-        +onSyncCompleted: Stream~Map~
-        +initialize() void
-        +requestSyncFromMaster(forceFull) Future~bool~
-        +prepareSyncPackage() Future~Map~
-        +prepareDeltaSyncPackage() Future~Map~
-        +applySyncPackageSafely(package) Future~bool~
-        +applyDeltaSyncPackageSafely(package) Future~bool~
-        +formatCounts(counts) String
+        +onFinancialChange: Stream~Map~
+        +onSyncCompleted: Stream~void~
+        +notifyLocalChangeCreated() void
+        +processPendingSyncQueue() Future~void~
+        +handleIncomingFinancialChange(message) Future~void~
+        +handleIncomingChangeAck(message) Future~void~
+        +requestSyncFromMaster(...) Future~bool~
     }
 
     class SignalingService {
         +isConnected: bool
-        +onMessage: Stream~Map~
-        +connect() void
-        +registerClient(role, deviceId, ...) void
-        +sendSyncRequest(...) void
-        +sendSyncData(...) void
-        +sendSyncChunk(...) void
-        +sendSyncAck(...) void
+        +onMessageReceived: Stream~Map~
+        +sendFinancialChange(payload) void
+        +sendFinancialChangeAck(...) void
+        +sendMessage(msg) void
     }
 
     class AuthService {
@@ -111,73 +107,52 @@ classDiagram
         +isLoggedIn: bool
         +isDeveloper: bool
         +isLatestKhajani: bool
-        +isOldKhajani: bool
         +canView: bool
         +canAdd: bool
         +canEdit: bool
         +canDelete: bool
-        +canSearch: bool
         +canPdf: bool
-        +canSync: bool
     }
 
-    class DeviceService {
-        +getDeviceId() Future~String~
-        +getDeviceName() Future~String~
-    }
-
-    class AnnualPdfGenerator {
-        +generateAnnualPdf(year) Future~Uint8List~
-        +getAnnualReportSummary(year) Future~ReportData~
-    }
-
-    RemoteSyncService --> DatabaseHelper : Reads/Writes Snapshot
-    RemoteSyncService --> SignalingService : Transmits Packages & Chunks
-    RemoteSyncService --> AuthService : Verifies View/Sync Permissions
-    RemoteSyncService --> DeviceService : Reads Hardware Device ID
-    DatabaseHelper --> AuthService : Granular Operation Guard
-    AnnualPdfGenerator --> DatabaseHelper : Reads Local SQLite (100% Offline)
+    RemoteSyncService --> DatabaseHelper : Applies changes & flushes queue
+    RemoteSyncService --> SignalingService : Sends & receives change packets
+    DatabaseHelper --> RemoteSyncService : Triggers notifyLocalChangeCreated()
+    DatabaseHelper --> AuthService : Validates permissions before write
 ```
 
 ---
 
-### 3. Device Approval & Financial Sync Sequence Diagram
+### 3. Real-Time Two-Way Sync Sequence Diagram
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Target as Target Phone (New/Old)
+    actor UserA as Phone A (Origin)
+    participant DbA as Local SQLite A
+    participant QueueA as Sync Queue A
     participant Relay as PC Signaling Server (Relay)
-    actor Dev as Developer Phone
-    actor Master as Master Phone (Latest Khajani)
+    participant DbB as Local SQLite B
+    actor UserB as Phone B (Target)
 
-    %% Step 1: Device Approval
-    Target->>Relay: Register & Send Device Request (Device ID, Name, Role)
-    Relay->>Dev: Push Device Request Notification
-    Dev->>Relay: Submit Approval (Role: OLD_KHAJANI, Permissions: View, Search, PDF)
-    Relay->>Target: Deliver Approval Result
+    UserA->>DbA: 1. Add / Edit / Delete Financial Record
+    Note over DbA: [CHANGE_CREATED]<br/>[LOCAL_DB_COMMITTED]
+    DbA->>QueueA: 2. Add to sync_queue (status: PENDING)
+    Note over QueueA: [SYNC_QUEUE_ADDED]
 
-    %% Step 2: Financial Sync
-    Note over Target: Approval Received -> Trigger Auto Sync
-    Target->>Relay: sync_request (requesterDeviceId, isDelta, lastKnownIds)
-    Relay->>Master: Forward sync_request to Master
-
-    Note over Master: [SYNC_STARTED] -> [MASTER_DATA_READ]
-    Master->>Master: Read all 7 financial tables (all years)
-    Note over Master: [DATA_SERIALIZED] -> SHA-256 Checksum Calculation
-    Master->>Relay: sync_data / sync_chunks (snapshot, digest, counts)
-    Note over Relay: [SERVER_RECEIVED] -> Relayed in-memory (No Disk Save)
-    Relay->>Target: Relay sync_data / sync_chunks
-
-    Note over Target: [TARGET_RECEIVED] -> [DATA_VALIDATED]
-    Target->>Target: Verify SHA-256 Payload Digest
-    Note over Target: [SQLITE_TRANSACTION_STARTED]
-    Target->>Target: Insert/Update Records (ConflictAlgorithm.replace)
-    Note over Target: [DATA_INSERTED/UPDATED] -> [SQLITE_COMMITTED]
-    Target->>Relay: Send sync_ack (status: SUCCESS)
-    Relay->>Master: Relay sync_ack
-    Note over Target: [SYNC_COMPLETED] -> [UI_REFRESHED]
-    Note over Target: Dashboard, Tables & Offline PDF Ready
+    alt Online
+        QueueA->>Relay: 3. [SYNC_SENT] financial_change payload
+        Note over Relay: [SERVER_RECEIVED]<br/>Forward to other authorized devices<br/>[SERVER_FORWARDED]
+        Relay->>DbB: 4. [TARGET_RECEIVED] financial_change
+        Note over DbB: [TARGET_VALIDATED]<br/>Apply in SQLite Txn<br/>[TARGET_DB_COMMITTED]
+        DbB->>UserB: 5. [UI_REFRESHED] Auto Reload Screen
+        DbB->>Relay: 6. [SYNC_ACK_SENT] status=SUCCESS
+        Relay->>QueueA: 7. [SYNC_ACK_RECEIVED]
+        Note over QueueA: [SYNC_QUEUE_COMPLETED]
+    else Offline
+        Note over QueueA: Pending changes retained locally in SQLite
+        Note over UserA: Network restored (WebSocket connected)
+        QueueA->>Relay: Process pending sync queue
+    end
 ```
 
 ---
@@ -191,9 +166,9 @@ erDiagram
         string name
         string password_hash
         string salt
-        string role "DEVELOPER | LATEST_KHAJANI | OLD_KHAJANI"
+        string role
         int is_active
-        string status "PENDING | APPROVED | REJECTED | REVOKED"
+        string status
         int can_view
         int can_add
         int can_edit
@@ -201,31 +176,6 @@ erDiagram
         int can_search
         int can_pdf
         int can_sync
-        int created_at
-        int updated_at
-    }
-
-    DEVICE_REQUESTS {
-        string request_id PK
-        string user_id
-        string user_name
-        string device_id
-        string device_name
-        string request_type
-        string status
-        string requested_role
-        int created_at
-        int updated_at
-    }
-
-    REGISTERED_DEVICES {
-        string device_id PK
-        string device_name
-        string user_id
-        string status
-        int created_at
-        int updated_at
-        int last_seen_at
     }
 
     VARGANI {
@@ -283,50 +233,104 @@ erDiagram
         real balance
     }
 
-    APP_META {
-        string key PK
-        string value
+    SYNC_QUEUE {
+        string change_id PK
+        string table_name
+        string record_id
+        string operation
+        int version
+        int changed_at
+        string status
+        int retry_count
+        string record_data
     }
 
-    KHAJANI_USERS ||--o{ DEVICE_REQUESTS : submits
-    KHAJANI_USERS ||--o{ REGISTERED_DEVICES : binds
+    SYNC_CHANGE_LOG {
+        string change_id PK
+        string table_name
+        string record_id
+        string operation
+        int version
+        int changed_at
+        string device_id
+        string user_id
+    }
+
+    SYNC_RECEIVED_CHANGES {
+        string change_id PK
+        string table_name
+        string record_id
+        int received_at
+        string from_device_id
+    }
+
+    SYNC_TOMBSTONES {
+        string table_name
+        string record_id
+        int deleted_at
+        string device_id
+    }
+
+    SYNC_RECORD_VERSIONS {
+        string table_name
+        string record_id
+        int version
+        int updated_at
+        string device_id
+    }
+
+    SYNC_CONFLICTS {
+        string change_id
+        string table_name
+        string record_id
+        string resolution
+        string reason
+        int resolved_at
+    }
 ```
 
 ---
 
 ## 🔄 Comprehensive Debug Log Pipeline
 
-During remote synchronization, both Master and Target logs output exact actual database counts:
+The following exact debug log sequence is guaranteed throughout the system:
 
 ```text
-[SYNC_STARTED] requestId=sync_1741234567 requester=D-NEW-PHONE user=khajani_02
-[MASTER_DATA_READ] Vargani: 150 records, Prasad Dengani: 40 records, Prasad Sahitya: 15 records, Aarti Vargani: 10 records, Kharch: 80 records, Mahaprasad Kharch: 25 records, Previous Balance: 5 records
-[DATA_SERIALIZED] Vargani: 150 records, Prasad Dengani: 40 records, Kharch: 80 records...
-[DATA_SENT] to=D-NEW-PHONE, Vargani: 150 records...
-[SERVER_RECEIVED] from=D-MASTER to=D-NEW-PHONE (Relaying in-memory without disk save)
-[TARGET_RECEIVED] from=D-MASTER, Vargani: 150 records...
-[DATA_VALIDATED] Vargani: 150 records...
-[SQLITE_TRANSACTION_STARTED] Vargani: 150 records...
-[DATA_INSERTED/UPDATED] Vargani: 150 records, Prasad Dengani: 40 records, Kharch: 80 records...
-[SQLITE_COMMITTED] Vargani: 150 records, Prasad Dengani: 40 records, Kharch: 80 records...
-[SYNC_COMPLETED] Vargani: 150 records, Prasad Dengani: 40 records, Kharch: 80 records...
-[UI_REFRESHED] Vargani: 150 records, Prasad Dengani: 40 records, Kharch: 80 records...
+[CHANGE_CREATED] changeId=CHG_... table=vargani op=UPDATE recordId=1
+[LOCAL_DB_COMMITTED] changeId=CHG_... table=vargani recordId=1
+[SYNC_QUEUE_ADDED] changeId=CHG_... table=vargani recordId=1 status=PENDING
+[SYNC_SENT] changeId=CHG_... table=vargani recordId=1 to=SERVER
+[SERVER_RECEIVED] type=financial_change from=DEV_PHONE_A table=vargani recordId=1 op=UPDATE
+[SERVER_FORWARDED] to=all authorized devices changeId=CHG_...
+[TARGET_RECEIVED] changeId=CHG_... table=vargani recordId=1
+[TARGET_VALIDATED] changeId=CHG_... table=vargani
+[TARGET_DB_COMMITTED] changeId=CHG_... table=vargani recordId=1
+[SYNC_ACK_SENT] changeId=CHG_... to=DEV_PHONE_A
+[SYNC_ACK_RECEIVED] changeId=CHG_... status=SUCCESS
+[SYNC_QUEUE_COMPLETED] changeId=CHG_...
+[UI_REFRESHED] table=vargani recordId=1 operation=UPDATE
 ```
 
 ---
 
-## 🔒 Security & Data Integrity Guarantees
+## 🔒 Security, Conflict & Data Integrity Guarantees
 
-1. **Transaction Safety & Rollback:**
-   - Any corruption or network interruption during sync aborts the atomic SQLite transaction. The existing local database remains unaltered.
-2. **Duplicate Prevention:**
-   - Database operations use `ConflictAlgorithm.replace` with original primary keys preserved, ensuring idempotent syncs.
-3. **Chunking Mechanism:**
-   - Large database packages are broken into 32 KB chunks to operate smoothly across restrictive WebSocket connections and ngrok tunnels.
-4. **Offline First:**
-   - Internet/server connectivity is required only during the sync operation. Once saved in local SQLite, table viewing, Marathi search, and annual report PDF generation function completely offline.
-5. **Layered Authorization:**
-   - `OLD_KHAJANI` accounts with read-only permissions have Add/Edit/Delete blocked at both the UI level and the `DatabaseHelper` repository layer (`_assertCanAdd()`, `_assertCanEdit()`, `_assertCanDelete()`).
+1. **Deterministic Conflict Resolution**:
+   - If two phones concurrently modify the same record, resolution follows:
+     1. Highest `version` wins.
+     2. If versions are equal, newest `changedAt` timestamp wins.
+     3. If timestamps are equal, alphabetical tiebreaker on `deviceId` wins.
+   - All conflicts are recorded in the `sync_conflicts` table for auditing.
+2. **Transaction Safety & Rollback**:
+   - Every incoming change is applied inside an atomic SQLite transaction (`db.transaction`). If validation fails, changes are completely rolled back without corrupting the local database.
+3. **Delete Sync with Tombstones**:
+   - Deletions are executed physically on the data table and tracked in `sync_tombstones`. Future incoming inserts for a tombstoned record are rejected to prevent resurrection.
+4. **Idempotency & Duplicate Prevention**:
+   - Incoming change IDs are logged in `sync_received_changes`. Re-transmitted packets are acknowledged without creating duplicate records.
+5. **No Infinite Ping-Pong Loops**:
+   - Changes applied via incoming sync are never added back into `sync_queue`.
+6. **Zero PC Data Storage**:
+   - PC WebSocket server never saves financial records to disk or database.
 
 ---
 
@@ -356,9 +360,9 @@ flutter run
 
 ### 3. Run Quality & Test Suite
 
-Verify all 118 unit, widget, and end-to-end sync tests:
+Verify all 133 unit, widget, and financial data sync tests:
 ```sh
-flutter analyze
+flutter analyze --no-pub
 flutter test
 ```
 

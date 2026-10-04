@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
 import '../models/mahaprasad_kharch_model.dart';
 import '../services/auth_service.dart';
+import '../services/remote_sync_service.dart';
 import '../utils/record_delete.dart';
 
 class MahaprasadKharchScreen extends StatefulWidget {
@@ -18,6 +20,7 @@ class _MahaprasadKharchScreenState
     extends State<MahaprasadKharchScreen> {
   final DatabaseHelper _db = DatabaseHelper.instance;
   final AuthService _authService = AuthService.instance;
+  StreamSubscription? _syncSub;
 
   List<MahaprasadKharch> _items = [];
 
@@ -36,6 +39,23 @@ class _MahaprasadKharchScreenState
     if (widget.initialLoading) {
       _loadData();
     }
+
+    _syncSub = RemoteSyncService.instance.onFinancialChange.listen((change) {
+      final table = (change['tableName'] ?? change['table']) as String?;
+      if (table == 'mahaprasad_kharch' || table == null) {
+        if (mounted) {
+          debugPrint(
+              '[UI_REFRESHED] table=mahaprasad_kharch recordId=${change['recordId']} operation=${change['operation']}');
+          _loadData();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSub?.cancel();
+    super.dispose();
   }
 
   // ============================================================

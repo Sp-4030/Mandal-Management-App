@@ -23,6 +23,11 @@ class RemoteSyncService {
 
   Stream<Map<String, int>> get onSyncCompleted => _syncCompletedController.stream;
 
+  final StreamController<Map<String, dynamic>> _financialChangeController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  Stream<Map<String, dynamic>> get onFinancialChange => _financialChangeController.stream;
+
   // Buffer for assembling chunked sync transfers: syncId -> List of chunks
   final Map<String, Map<int, String>> _chunkBuffers = {};
   final Map<String, int> _chunkExpectedTotals = {};
@@ -61,6 +66,7 @@ class RemoteSyncService {
   void dispose() {
     _signalingSubscription?.cancel();
     _syncCompletedController.close();
+    _financialChangeController.close();
   }
 
   void _handleIncomingMessage(Map<String, dynamic> message) async {
@@ -79,7 +85,11 @@ class RemoteSyncService {
         break;
 
       case 'sync_ack':
-        _handleIncomingSyncAck(message);
+        await handleIncomingChangeAck(message);
+        break;
+
+      case 'financial_change':
+        await handleIncomingFinancialChange(message);
         break;
 
       case 'sync_status':
@@ -175,6 +185,145 @@ class RemoteSyncService {
     final from = message['from'];
     final status = message['status'];
     print('[SYNC_ACK_RECEIVED] from=$from status=$status');
+  }
+
+  // ============================================================
+  // TWO-WAY DELTA SYNC: PENDING QUEUE & REAL-TIME FINANCIAL CHANGES
+  // ============================================================
+
+  void notifyLocalChangeCreated() {
+    try {
+      processPendingSyncQueue();
+    } catch (_) {}
+  }
+
+  Future<void> processPendingSyncQueue() async {
+    if (DatabaseHelper.instance.isDeviceRevoked) return;
+    if (!SignalingService.instance.isConnected) return;
+
+    final pending = await DatabaseHelper.instance.getPendingSyncQueue();
+    if (pending.isEmpty) return;
+
+    for (final row in pending) {
+      final changeId = row['change_id'] as String;
+      final tableName = row['table_name'] as String;
+      final op = row['operation'] as String;
+
+      final message = {
+        'type': 'financial_change',
+        'changeId': changeId,
+        'deviceId': row['device_id'],
+        'userId': row['user_id'],
+        'tableName': tableName,
+        'recordId': row['record_id'],
+        'operation': op,
+        'changedAt': row['changed_at'],
+        'version': row['version'],
+        'recordData': jsonDecode(row['record_data'] as String),
+      };
+
+      // STAGE 4: SYNC_SENT
+      SignalingService.instance.sendMessage(message);
+      print('[SYNC_SENT] changeId=$changeId table=$tableName op=$op to=SERVER');
+
+      await DatabaseHelper.instance.updateSyncQueueStatus(changeId, 'SENT');
+    }
+  }
+
+  Future<void> handleIncomingFinancialChange(Map<String, dynamic> message) async {
+    final fromDeviceId = (message['deviceId'] ?? message['fromDeviceId'] ?? message['from'] ?? 'UNKNOWN') as String;
+    final changeId = (message['changeId'] ?? '') as String;
+    final tableName = (message['tableName'] ?? '') as String;
+    final recordId = (message['recordId'] ?? '').toString();
+    final operation = (message['operation'] ?? '') as String;
+    final changedAt = (message['changedAt'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch;
+    final version = (message['version'] as num?)?.toInt() ?? 1;
+    final recordData = message['recordData'] is Map ? Map<String, dynamic>.from(message['recordData'] as Map) : <String, dynamic>{};
+
+    if (changeId.isEmpty || tableName.isEmpty || operation.isEmpty) return;
+
+    // Check device revocation
+    if (DatabaseHelper.instance.isDeviceRevoked) {
+      print('[REVOKED_IGNORED] Device is revoked. Ignoring incoming financial change.');
+      return;
+    }
+
+    // Check View Permission
+    if (!AuthService.instance.canView) {
+      print('[PERMISSION_DENIED] No View permission. Cannot receive financial change.');
+      return;
+    }
+
+    final myDeviceId = await DeviceService.instance.getDeviceId();
+    if (fromDeviceId == myDeviceId) {
+      return;
+    }
+
+    // STAGE 7: TARGET_RECEIVED
+    print('[TARGET_RECEIVED] changeId=$changeId table=$tableName op=$operation from=$fromDeviceId');
+
+    // STAGE 8: TARGET_VALIDATED
+    print('[TARGET_VALIDATED] changeId=$changeId table=$tableName op=$operation');
+
+    // STAGE 9: TARGET_DB_COMMITTED
+    final success = await DatabaseHelper.instance.applyIncomingFinancialChange(
+      changeId: changeId,
+      deviceId: fromDeviceId,
+      userId: (message['userId'] ?? '') as String,
+      tableName: tableName,
+      recordId: recordId,
+      operation: operation,
+      changedAt: changedAt,
+      version: version,
+      recordData: recordData,
+    );
+
+    if (success) {
+      print('[TARGET_DB_COMMITTED] changeId=$changeId table=$tableName recordId=$recordId op=$operation');
+
+      // STAGE 10: SYNC_ACK_SENT
+      SignalingService.instance.sendMessage({
+        'type': 'sync_ack',
+        'changeId': changeId,
+        'fromDeviceId': myDeviceId,
+        'toDeviceId': fromDeviceId,
+        'status': 'APPLIED',
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      });
+      print('[SYNC_ACK_SENT] changeId=$changeId to=$fromDeviceId');
+
+      // Query actual counts
+      final counts = await DatabaseHelper.instance.getTableRecordCounts();
+
+      // STAGE 13: UI_REFRESHED
+      print('[UI_REFRESHED] table=$tableName counts=${formatCounts(counts)}');
+
+      _financialChangeController.add({
+        'changeId': changeId,
+        'tableName': tableName,
+        'recordId': recordId,
+        'operation': operation,
+        'recordData': recordData,
+      });
+      _syncCompletedController.add(counts);
+    }
+  }
+
+  Future<void> handleIncomingChangeAck(Map<String, dynamic> message) async {
+    final changeId = message['changeId'] as String?;
+    final from = message['fromDeviceId'] ?? message['from'];
+    final status = message['status'] ?? 'ACK';
+
+    if (changeId != null && changeId.isNotEmpty) {
+      // STAGE 11: SYNC_ACK_RECEIVED
+      print('[SYNC_ACK_RECEIVED] changeId=$changeId from=$from status=$status');
+
+      // STAGE 12: SYNC_QUEUE_COMPLETED
+      await DatabaseHelper.instance.markSyncQueueCompleted(changeId);
+      print('[SYNC_QUEUE_COMPLETED] changeId=$changeId');
+    } else {
+      _handleIncomingSyncAck(message);
+    }
   }
 
   void _handleIncomingSyncStatus(Map<String, dynamic> message) {

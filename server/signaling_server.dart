@@ -363,6 +363,10 @@ class SignalingServer {
           _routePeerMessage(socket, map);
           break;
 
+        case 'financial_change':
+          _handleFinancialChange(socket, map);
+          break;
+
         case 'get_master_info':
           _handleGetMasterInfo(socket);
           break;
@@ -777,8 +781,34 @@ class SignalingServer {
     }
   }
 
+  void _handleFinancialChange(WebSocket socket, Map<String, dynamic> map) {
+    final changeId = (map['changeId'] ?? '') as String;
+    final tableName = (map['tableName'] ?? '') as String;
+    final operation = (map['operation'] ?? '') as String;
+    final fromDeviceId = (map['deviceId'] ?? _clients[socket]?.deviceId ?? '') as String;
+
+    print('[SERVER_RECEIVED] changeId=$changeId table=$tableName op=$operation from=$fromDeviceId');
+
+    int forwardedCount = 0;
+    for (final client in _clients.values) {
+      if (client.socket != socket && client.deviceId != fromDeviceId) {
+        _send(client.socket, map);
+        forwardedCount++;
+        print('[SERVER_FORWARDED] changeId=$changeId table=$tableName to=${client.deviceId}');
+      }
+    }
+
+    _send(socket, {
+      'type': 'sync_ack',
+      'changeId': changeId,
+      'status': 'SERVER_RECEIVED',
+      'forwardedCount': forwardedCount,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
   void _routePeerMessage(WebSocket socket, Map<String, dynamic> map) {
-    final targetDeviceId = map['to'] as String?;
+    final targetDeviceId = (map['to'] ?? map['toDeviceId']) as String?;
     if (targetDeviceId == null) return;
 
     for (final client in _clients.values) {

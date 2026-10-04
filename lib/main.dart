@@ -196,6 +196,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
   StreamSubscription? _syncSub;
+  StreamSubscription? _financialSub;
   bool _isManualSyncing = false;
 
   @override
@@ -205,6 +206,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
     RemoteSyncService.instance.initialize();
     _syncSub = RemoteSyncService.instance.onSyncCompleted.listen((_) {
+      if (mounted) setState(() {});
+    });
+    _financialSub = RemoteSyncService.instance.onFinancialChange.listen((_) {
       if (mounted) setState(() {});
     });
     _checkAndTriggerInitialSyncIfNeeded();
@@ -455,6 +459,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void dispose() {
     _syncSub?.cancel();
+    _financialSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

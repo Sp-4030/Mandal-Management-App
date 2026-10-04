@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
 import '../services/auth_service.dart';
+import '../services/remote_sync_service.dart';
 import '../utils/record_delete.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
@@ -30,15 +32,27 @@ class _VarganiScreenState extends State<VarganiScreen> {
   double totalAmount = 0.0;
   double previousBalance = 0.0;
   int selectedYear = DateTime.now().year;
+  StreamSubscription? _syncSub;
 
   @override
   void initState() {
     super.initState();
     loadData();
+    _syncSub = RemoteSyncService.instance.onFinancialChange.listen((change) {
+      final table = change['tableName'] as String?;
+      if (table == 'vargani' || table == 'previous_balance' || table == null) {
+        if (mounted) {
+          debugPrint(
+              '[UI_REFRESHED] table=$table recordId=${change['recordId']} operation=${change['operation']}');
+          loadData();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
+    _syncSub?.cancel();
     nameController.dispose();
     amountController.dispose();
     previousBalanceController.dispose();

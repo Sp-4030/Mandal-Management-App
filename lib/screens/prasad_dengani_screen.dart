@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../database/database_helper.dart';
 import '../services/auth_service.dart';
+import '../services/remote_sync_service.dart';
 import '../utils/record_delete.dart';
 
 class PrasadDenganiScreen extends StatefulWidget {
@@ -26,6 +28,7 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
   double aartiVarganiTotal = 0;
 
   late bool isLoading;
+  StreamSubscription? _syncSub;
 
   @override
   void initState() {
@@ -34,6 +37,22 @@ class _PrasadDenganiScreenState extends State<PrasadDenganiScreen> {
     if (widget.initialLoading) {
       loadData();
     }
+    _syncSub = RemoteSyncService.instance.onFinancialChange.listen((change) {
+      final table = change['tableName'] as String?;
+      if (table == 'prasad_dengani' || table == 'prasad_sahitya' || table == 'aarti_vargani' || table == null) {
+        if (mounted) {
+          debugPrint(
+              '[UI_REFRESHED] table=$table recordId=${change['recordId']} operation=${change['operation']}');
+          loadData();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSub?.cancel();
+    super.dispose();
   }
 
   // ============================================================

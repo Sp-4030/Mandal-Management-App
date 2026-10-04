@@ -2,7 +2,7 @@ name: hindvi_app
 description: "Hindvi Swarajya Mandal Management App"
 publish_to: 'none'
 
-version: 1.0.7+7
+version: 1.0.9+8
 
 environment:
   sdk: ^3.13.4

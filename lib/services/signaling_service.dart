@@ -11,6 +11,7 @@ import '../models/device_model.dart';
 import '../models/khajani_user.dart';
 import 'auth_service.dart';
 import 'device_service.dart';
+import 'remote_sync_service.dart';
 
 enum SignalingConnectionState {
   disconnected,
@@ -224,6 +225,11 @@ class SignalingService {
 
       // Flush any offline requests that are pending locally
       _flushPendingLocalRequests();
+
+      // Flush any pending financial sync queue
+      try {
+        RemoteSyncService.instance.processPendingSyncQueue();
+      } catch (_) {}
 
       return true;
     } catch (e) {
@@ -890,6 +896,29 @@ class SignalingService {
       payload['recordCounts'] = recordCounts;
     }
     sendMessage(payload);
+  }
+
+  /// Sends a financial change (INSERT, UPDATE, DELETE) to all authorized peers via PC server
+  void sendFinancialChange(Map<String, dynamic> change) {
+    if (!isConnected) {
+      connect();
+    }
+    sendMessage(change);
+  }
+
+  /// Sends financial change acknowledgment back to origin device
+  void sendFinancialChangeAck({
+    required String changeId,
+    required String toDeviceId,
+    required String status,
+  }) {
+    sendMessage({
+      'type': 'sync_ack',
+      'changeId': changeId,
+      'toDeviceId': toDeviceId,
+      'status': status,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
   }
 
   void disconnect() {
