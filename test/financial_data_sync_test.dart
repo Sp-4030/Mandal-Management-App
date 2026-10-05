@@ -6,8 +6,6 @@ import 'package:hindvi_app/database/database_helper.dart';
 import 'package:hindvi_app/models/device_model.dart';
 import 'package:hindvi_app/models/khajani_user.dart';
 import 'package:hindvi_app/services/auth_service.dart';
-import 'package:hindvi_app/services/remote_sync_service.dart';
-import 'package:hindvi_app/services/signaling_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

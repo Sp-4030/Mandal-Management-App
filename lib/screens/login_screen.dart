@@ -4,12 +4,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../database/database_helper.dart';
 import '../main.dart';
 import '../models/khajani_user.dart';
 import '../services/auth_service.dart';
 import '../services/device_service.dart';
 import '../services/remote_sync_service.dart';
+import '../services/security_enforcement_service.dart';
 import '../services/signaling_service.dart';
+import 'access_revoked_screen.dart';
 
 const Color _saffron = Color(0xFFFF7A00);
 const Color _deepSaffron = Color(0xFFB94D00);
@@ -19,11 +22,13 @@ const Color _ink = Color(0xFF25231F);
 class KhajaniLoginScreen extends StatefulWidget {
   final bool? isFirstSetupOverride;
   final List<KhajaniUser>? initialKhajanis;
+  final String? initialStatusMessage;
 
   const KhajaniLoginScreen({
     super.key,
     this.isFirstSetupOverride,
     this.initialKhajanis,
+    this.initialStatusMessage,
   });
 
   @override
@@ -63,6 +68,9 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialStatusMessage != null) {
+      _errorMessage = widget.initialStatusMessage;
+    }
     _checkInitialState();
     _initDeviceAndSignaling();
   }
@@ -266,6 +274,15 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
   Future<void> _handleFirstSetup() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Mandatory Internet Check
+    final hasNet = await SecurityEnforcementService.instance.checkInternetConnectivity();
+    if (!hasNet) {
+      setState(() {
+        _errorMessage = 'Internet connection required\nPlease turn on Internet to continue.';
+      });
+      return;
+    }
+
     final name = _nameController.text.trim();
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
@@ -362,6 +379,15 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
   Future<void> _handleNewUserRequest() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // Mandatory Internet Check
+    final hasNet = await SecurityEnforcementService.instance.checkInternetConnectivity();
+    if (!hasNet) {
+      setState(() {
+        _errorMessage = 'Internet connection required\nPlease turn on Internet to continue.';
+      });
+      return;
+    }
+
     final name = _nameController.text.trim();
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
@@ -442,6 +468,16 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
       _successMessage = null;
     });
 
+    // 1. Mandatory Internet Check
+    final hasNet = await SecurityEnforcementService.instance.checkInternetConnectivity();
+    if (!hasNet) {
+      setState(() {
+        _isSubmitting = false;
+        _errorMessage = 'Internet connection required\nPlease turn on Internet to continue.';
+      });
+      return;
+    }
+
     try {
       final user = await _authService.login(
         name: name,
@@ -452,6 +488,32 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
       if (!mounted) return;
 
       if (user != null) {
+        // 2. Server Authorization Before App Access
+        if (!user.isDeveloper) {
+          final authRes = await SecurityEnforcementService.instance.verifyServerAuthorization(
+            userId: user.userId,
+            deviceId: _deviceId,
+          );
+          if (!mounted) return;
+          if (authRes['status'] == 'REVOKED') {
+            await _authService.logout();
+            if (!mounted) return;
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AccessRevokedScreen()),
+              (route) => false,
+            );
+            return;
+          }
+          if (authRes['isAuthorized'] != true && authRes['status'] != 'APPROVED') {
+            await _authService.logout();
+            if (!mounted) return;
+            setState(() {
+              _errorMessage = authRes['message'] as String? ?? 'Developer approval required.';
+            });
+            return;
+          }
+        }
+
         // Register client on signaling server if connected
         if (_signalingService.isConnected) {
           _signalingService.registerClient(
@@ -491,8 +553,27 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
   Future<void> _recheckStatus() async {
     setState(() => _isSubmitting = true);
     try {
-      final isRevoked = await _deviceService.isCurrentDeviceRevoked();
+      final hasNet = await SecurityEnforcementService.instance.checkInternetConnectivity();
+      if (!hasNet) {
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = 'Internet connection required\nPlease turn on Internet to continue.';
+        });
+        return;
+      }
+
+      final isRevoked = await _deviceService.isCurrentDeviceRevoked() ||
+          DatabaseHelper.instance.isDeviceRevoked;
       _isDeviceRevoked = isRevoked;
+      if (isRevoked) {
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const AccessRevokedScreen()),
+            (route) => false,
+          );
+        }
+        return;
+      }
 
       final devId = _deviceId.isNotEmpty ? _deviceId : await _deviceService.getDeviceId();
       final approvedReq = await _deviceService.getLatestApprovedRequest();

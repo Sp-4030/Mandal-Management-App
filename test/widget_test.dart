@@ -4,11 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hindvi_app/main.dart';
 import 'package:hindvi_app/models/khajani_user.dart';
 import 'package:hindvi_app/services/auth_service.dart';
+import 'package:hindvi_app/services/security_enforcement_service.dart';
 
 void main() {
   testWidgets('dashboard presents core workflows and Settings icon', (
     WidgetTester tester,
   ) async {
+    SecurityEnforcementService.instance.setMockConnectivity(true);
+    SecurityEnforcementService.instance.setMockBypassEnabled(true);
+
     AuthService.instance.setCurrentUserForTesting(
       const KhajaniUser(
         userId: 'test_latest',
@@ -21,7 +25,11 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(const HindviApp());
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DashboardScreen(checkUpdateOnStartup: false),
+      ),
+    );
     await tester.pumpAndSettle();
 
     // Check header and core workflows

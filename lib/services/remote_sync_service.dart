@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../database/database_helper.dart';
 import '../services/auth_service.dart';
 import '../services/device_service.dart';
+import '../services/security_enforcement_service.dart';
 import '../services/signaling_service.dart';
 
 class RemoteSyncService {
@@ -498,6 +499,7 @@ class RemoteSyncService {
     bool forceFull = false,
     Duration timeout = const Duration(seconds: 12),
   }) async {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.sync);
     if (!AuthService.instance.canView) {
       throw StateError('माहिती पाहण्याची किंवा सिंक करण्याची परवानगी (View Permission) नाही.');
     }

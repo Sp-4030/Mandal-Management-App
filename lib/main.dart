@@ -4,15 +4,19 @@ import 'package:flutter/material.dart';
 
 import 'database/database_helper.dart';
 import 'pdf/annual_report_pdf.dart';
+import 'screens/access_revoked_screen.dart';
 import 'screens/app_update_screen.dart';
 import 'screens/kharch_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/mahaprasad_kharch_screen.dart';
+import 'screens/no_internet_screen.dart';
 import 'screens/prasad_dengani_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/vargani_screen.dart';
 import 'services/auth_service.dart';
+import 'services/device_service.dart';
 import 'services/remote_sync_service.dart';
+import 'services/security_enforcement_service.dart';
 import 'services/signaling_service.dart';
 import 'services/update_service.dart';
 
@@ -140,43 +144,147 @@ class AuthGateScreen extends StatefulWidget {
 }
 
 class _AuthGateScreenState extends State<AuthGateScreen> {
-  late Future<void> _initSessionFuture;
+  bool _isChecking = true;
+  bool _isOffline = false;
+  bool _isRevoked = false;
+  String? _statusMessage;
 
   @override
   void initState() {
     super.initState();
-    if (AuthService.instance.isLoggedIn) {
-      _initSessionFuture = Future.value();
-    } else {
-      _initSessionFuture = AuthService.instance.initSession();
+    _performStartupVerification();
+  }
+
+  Future<void> _performStartupVerification() async {
+    setState(() {
+      _isChecking = true;
+      _isOffline = false;
+      _isRevoked = false;
+      _statusMessage = null;
+    });
+
+    // 1. Mandatory Internet Check
+    final isOnline = await SecurityEnforcementService.instance.checkInternetConnectivity();
+    if (!isOnline) {
+      if (mounted) {
+        setState(() {
+          _isChecking = false;
+          _isOffline = true;
+        });
+      }
+      return;
+    }
+
+    // 2. Check Device Revocation
+    final isRevoked = await DeviceService.instance.isCurrentDeviceRevoked() ||
+        DatabaseHelper.instance.isDeviceRevoked;
+    if (isRevoked) {
+      if (mounted) {
+        setState(() {
+          _isChecking = false;
+          _isRevoked = true;
+        });
+      }
+      return;
+    }
+
+    // 3. Initialize Local Session
+    if (AuthService.instance.currentUser == null) {
+      await AuthService.instance.initSession();
+    }
+
+    if (!AuthService.instance.isLoggedIn) {
+      if (mounted) {
+        setState(() => _isChecking = false);
+      }
+      return;
+    }
+
+    // 4. Server Authorization Before App Access
+    try {
+      final user = AuthService.instance.currentUser;
+      if (user != null && !user.isDeveloper) {
+        final authResult = await SecurityEnforcementService.instance.verifyServerAuthorization(
+          userId: user.userId,
+        );
+        if (!mounted) return;
+
+        final status = authResult['status'] as String?;
+        if (status == 'REVOKED') {
+          await AuthService.instance.logout();
+          setState(() {
+            _isChecking = false;
+            _isRevoked = true;
+          });
+          return;
+        }
+
+        if (status == 'PENDING' || status == 'REJECTED' || status == 'NOT_FOUND') {
+          await AuthService.instance.logout();
+          setState(() {
+            _isChecking = false;
+            _statusMessage = authResult['message'] as String? ?? 'Developer approval required.';
+          });
+          return;
+        }
+      }
+
+      // Approved / Authorized!
+      if (mounted) {
+        setState(() => _isChecking = false);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      if (!SecurityEnforcementService.instance.isInternetOnline) {
+        setState(() {
+          _isChecking = false;
+          _isOffline = true;
+        });
+      } else {
+        setState(() => _isChecking = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isChecking) {
+      return const Scaffold(
+        backgroundColor: _warmPaper,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: _saffron),
+              SizedBox(height: 16),
+              Text(
+                'सुरक्षा व सर्व्हर पडताळणी सुरू आहे...',
+                style: TextStyle(color: _ink, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_isOffline) {
+      return NoInternetScreen(
+        onRetry: _performStartupVerification,
+      );
+    }
+
+    if (_isRevoked) {
+      return const AccessRevokedScreen();
+    }
+
     if (AuthService.instance.isLoggedIn) {
       return DashboardScreen(
         checkUpdateOnStartup: widget.checkUpdateOnStartup,
       );
     }
 
-    return FutureBuilder<void>(
-      future: _initSessionFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.done) {
-          if (AuthService.instance.isLoggedIn) {
-            return DashboardScreen(
-              checkUpdateOnStartup: widget.checkUpdateOnStartup,
-            );
-          } else {
-            return const KhajaniLoginScreen();
-          }
-        }
-        return const Scaffold(
-          backgroundColor: _warmPaper,
-          body: SizedBox.shrink(),
-        );
-      },
+    return KhajaniLoginScreen(
+      initialStatusMessage: _statusMessage,
     );
   }
 }
@@ -197,6 +305,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     with WidgetsBindingObserver {
   StreamSubscription? _syncSub;
   StreamSubscription? _financialSub;
+  StreamSubscription? _revokedSub;
   bool _isManualSyncing = false;
 
   @override
@@ -205,6 +314,14 @@ class _DashboardScreenState extends State<DashboardScreen>
     WidgetsBinding.instance.addObserver(this);
     DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
     RemoteSyncService.instance.initialize();
+    _revokedSub = SecurityEnforcementService.instance.onRevoked.listen((_) {
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AccessRevokedScreen()),
+          (route) => false,
+        );
+      }
+    });
     _syncSub = RemoteSyncService.instance.onSyncCompleted.listen((_) {
       if (mounted) setState(() {});
     });
@@ -221,6 +338,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     try {
       if (RemoteSyncService.instance.isMaster) return;
       if (!AuthService.instance.canView) return;
+      if (!SignalingService.instance.isConnected) return;
 
       final counts = await DatabaseHelper.instance.getTableRecordCounts();
       final hasRecords = counts.values.any((c) => c > 0);
@@ -389,6 +507,18 @@ class _DashboardScreenState extends State<DashboardScreen>
       return;
     }
 
+    try {
+      SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.sync);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '').replaceFirst('Bad state: ', '')),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     if (RemoteSyncService.instance.isMaster) {
       final counts = await DatabaseHelper.instance.getTableRecordCounts();
       if (!mounted) return;
@@ -458,6 +588,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   @override
   void dispose() {
+    _revokedSub?.cancel();
     _syncSub?.cancel();
     _financialSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -468,6 +599,104 @@ class _DashboardScreenState extends State<DashboardScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       DatabaseHelper.instance.expireMigrationRecoveryIfNeeded();
+      _checkSecurityOnResume();
+    }
+  }
+
+  Future<void> _checkSecurityOnResume() async {
+    final isOnline = await SecurityEnforcementService.instance.checkInternetConnectivity();
+    if (!isOnline) {
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => NoInternetScreen(
+              onRetry: () async {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const AuthGateScreen()),
+                  (route) => false,
+                );
+              },
+            ),
+          ),
+          (route) => false,
+        );
+      }
+      return;
+    }
+
+    final isRevoked = await DeviceService.instance.isCurrentDeviceRevoked() ||
+        DatabaseHelper.instance.isDeviceRevoked;
+    if (isRevoked) {
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AccessRevokedScreen()),
+          (route) => false,
+        );
+      }
+      return;
+    }
+
+    final user = AuthService.instance.currentUser;
+    if (user != null && !user.isDeveloper) {
+      try {
+        final authResult = await SecurityEnforcementService.instance.verifyServerAuthorization(
+          userId: user.userId,
+        );
+        final status = authResult['status'] as String?;
+        if (status == 'REVOKED') {
+          await AuthService.instance.logout();
+          if (mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AccessRevokedScreen()),
+              (route) => false,
+            );
+          }
+          return;
+        }
+        if (mounted) setState(() {});
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _openScreen(Widget screen, {SecurityAction action = SecurityAction.view}) async {
+    try {
+      SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: action);
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => screen),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = e.toString();
+      if (msg.contains('REVOKED') || DatabaseHelper.instance.isDeviceRevoked) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AccessRevokedScreen()),
+          (route) => false,
+        );
+      } else if (msg.contains('Internet connection required') ||
+          !SecurityEnforcementService.instance.isInternetOnline) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => NoInternetScreen(
+              onRetry: () async {
+                Navigator.pop(context);
+                final online = await SecurityEnforcementService.instance.checkInternetConnectivity();
+                if (online && mounted) {
+                  _openScreen(screen, action: action);
+                }
+              },
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg.replaceFirst('Exception: ', '').replaceFirst('Bad state: ', '')),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     }
   }
 
@@ -799,12 +1028,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       : 'वर्गणीच्या जमा नोंदी आणि शिल्लक',
                   icon: Icons.account_balance_wallet,
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const VarganiScreen(),
-                      ),
-                    );
+                    _openScreen(const VarganiScreen(), action: SecurityAction.view);
                   },
                 ),
 
@@ -819,12 +1043,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       : 'देणगी आणि आरती वर्गणी व्यवस्थापन',
                   icon: Icons.volunteer_activism,
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const PrasadDenganiScreen(),
-                      ),
-                    );
+                    _openScreen(const PrasadDenganiScreen(), action: SecurityAction.view);
                   },
                 ),
 
@@ -839,12 +1058,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       : 'साहित्य देणगीच्या नोंदी',
                   icon: Icons.inventory_2,
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const PrasadDenganiScreen(),
-                      ),
-                    );
+                    _openScreen(const PrasadDenganiScreen(), action: SecurityAction.view);
                   },
                 ),
 
@@ -859,12 +1073,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       : 'वस्तू, खरेदीदार आणि एकूण खर्च',
                   icon: Icons.receipt_long,
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const KharchScreen(),
-                      ),
-                    );
+                    _openScreen(const KharchScreen(), action: SecurityAction.view);
                   },
                 ),
 
@@ -879,12 +1088,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       : 'बाजारातील वस्तू आणि खर्च',
                   icon: Icons.shopping_cart,
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const MahaprasadKharchScreen(),
-                      ),
-                    );
+                    _openScreen(const MahaprasadKharchScreen(), action: SecurityAction.view);
                   },
                 ),
 
@@ -905,12 +1109,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       );
                       return;
                     }
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AnnualReportScreen(),
-                      ),
-                    );
+                    _openScreen(const AnnualReportScreen(), action: SecurityAction.pdf);
                   },
                 ),
               ],
@@ -937,6 +1136,7 @@ class _AnnualReportScreenState extends State<AnnualReportScreen> {
     if (_isBusy) return;
     setState(() => _isBusy = true);
     try {
+      SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.pdf);
       if (preview) {
         await AnnualReportPdf.preview(year: _selectedYear, context: context);
       } else {

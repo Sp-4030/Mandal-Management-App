@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../database/database_helper.dart';
+import '../services/security_enforcement_service.dart';
 
 class AnnualReportPdf {
   static const String _fontFamily = 'HindviMarathiFont';
@@ -44,6 +45,8 @@ class AnnualReportPdf {
     required int year,
     BuildContext? previewContext,
   }) async {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.pdf);
+
     final previewNavigator = previewContext == null
         ? null
         : Navigator.of(previewContext);

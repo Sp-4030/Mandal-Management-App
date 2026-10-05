@@ -12,6 +12,7 @@ import '../models/khajani_user.dart';
 import 'auth_service.dart';
 import 'device_service.dart';
 import 'remote_sync_service.dart';
+import 'security_enforcement_service.dart';
 
 enum SignalingConnectionState {
   disconnected,
@@ -565,6 +566,9 @@ class SignalingService {
         final myDeviceId = await DeviceService.instance.getDeviceId();
         if (deviceId == myDeviceId) {
           DatabaseHelper.instance.setDeviceRevokedState(true);
+          await AuthService.instance.logout();
+          // Immediately trigger full-screen revoke enforcement
+          SecurityEnforcementService.instance.triggerRevoked();
         }
       }
     } catch (_) {}
@@ -669,6 +673,70 @@ class SignalingService {
       'deviceId': deviceId,
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     });
+  }
+
+  /// Authorize app access with the PC WebSocket server before allowing app access
+  Future<Map<String, dynamic>> authorizeAppAccess({
+    required String deviceId,
+    required String userId,
+    String? requestId,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final completer = Completer<Map<String, dynamic>>();
+
+    if (!isConnected) {
+      final connected = await connect(timeout: const Duration(seconds: 5));
+      if (!connected) {
+        throw StateError('PC Signaling Server शी संपर्क होऊ शकला नाही.');
+      }
+    }
+
+    late StreamSubscription sub;
+    Timer? timer;
+
+    void cleanup() {
+      timer?.cancel();
+      sub.cancel();
+    }
+
+    timer = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        cleanup();
+        completer.completeError(
+          TimeoutException('Server authorization check timed out.'),
+        );
+      }
+    });
+
+    sub = onMessage.listen((msg) {
+      final type = msg['type'] as String?;
+      if (type == 'authorize_app_access_result' ||
+          type == 'device_approval_result' ||
+          type == 'device_revoked' ||
+          type == 'check_status_result') {
+        final targetDev = msg['deviceId'] as String?;
+        final targetUser = msg['userId'] as String?;
+        final matchDev = targetDev == null || targetDev.isEmpty || targetDev == deviceId;
+        final matchUser = targetUser == null || targetUser.isEmpty || targetUser == userId;
+
+        if (matchDev || matchUser) {
+          if (!completer.isCompleted) {
+            cleanup();
+            completer.complete(msg);
+          }
+        }
+      }
+    });
+
+    sendMessage({
+      'type': 'authorize_app_access',
+      'requestId': requestId ?? '',
+      'userId': userId,
+      'deviceId': deviceId,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+
+    return completer.future;
   }
 
   /// Send a device request to the server with duplicate transmission prevention

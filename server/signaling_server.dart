@@ -312,9 +312,11 @@ class SignalingServer {
             'serverTime': DateTime.now().millisecondsSinceEpoch,
           });
 
-          // If developer connects, automatically send all pending requests
+          // If developer connects, automatically send all requests & clients
           if (session.isDeveloper) {
             _sendPendingRequestsToDeveloper(socket);
+            _sendAllRequestsToDeveloper(socket);
+            _sendConnectedClientsToDeveloper(socket);
           } else {
             // Check if there is an approved request for this client (Offline Recovery)
             _checkAndDeliverPendingApprovalForClient(socket, session);
@@ -325,8 +327,28 @@ class SignalingServer {
           _sendPendingRequestsToDeveloper(socket);
           break;
 
+        case 'get_all_requests':
+          _sendAllRequestsToDeveloper(socket);
+          break;
+
+        case 'get_connected_clients':
+          _sendConnectedClientsToDeveloper(socket);
+          break;
+
+        case 'set_latest_khajani':
+          _handleSetLatestKhajani(socket, map);
+          break;
+
+        case 'device_restore':
+          _handleDeviceRestore(socket, map);
+          break;
+
         case 'check_status':
           _handleCheckStatus(socket, map);
+          break;
+
+        case 'authorize_app_access':
+          _handleAuthorizeAppAccess(socket, map);
           break;
 
         case 'device_request':
@@ -453,12 +475,12 @@ class SignalingServer {
     if (session.deviceId == null || session.deviceId!.isEmpty) return;
 
     for (final req in _pendingRequests.values) {
-      if (req.status == 'APPROVED') {
-        final matchesDevice = req.deviceId == session.deviceId;
-        final matchesUser = session.userId == null || session.userId!.isEmpty || req.userId == session.userId;
-        final matchesReq = session.requestId == null || session.requestId!.isEmpty || req.requestId == session.requestId;
+      final matchesDevice = req.deviceId == session.deviceId;
+      final matchesUser = session.userId == null || session.userId!.isEmpty || req.userId == session.userId;
+      final matchesReq = session.requestId == null || session.requestId!.isEmpty || req.requestId == session.requestId;
 
-        if (matchesDevice && matchesUser && matchesReq) {
+      if (matchesDevice && matchesUser && matchesReq) {
+        if (req.status == 'APPROVED') {
           print('[SERVER_FOUND_TARGET_DEVICE] requestId=${req.requestId} userId=${req.userId} deviceId=${req.deviceId} status=APPROVED');
           final approvalPayload = {
             'type': 'device_approval_result',
@@ -472,6 +494,14 @@ class SignalingServer {
           };
           _send(socket, approvalPayload);
           print('[SERVER_SENT_APPROVAL_TO_NEW_PHONE] requestId=${req.requestId} userId=${req.userId} deviceId=${req.deviceId} status=APPROVED');
+          break;
+        } else if (req.status == 'REVOKED') {
+          print('[SERVER_FOUND_REVOKED_DEVICE] requestId=${req.requestId} deviceId=${req.deviceId} status=REVOKED');
+          _send(socket, {
+            'type': 'device_revoked',
+            'deviceId': req.deviceId,
+            'revokedAt': req.updatedAt ?? DateTime.now().millisecondsSinceEpoch,
+          });
           break;
         }
       }
@@ -531,6 +561,15 @@ class SignalingServer {
         // STEP 5: SERVER_SENT_APPROVAL_TO_NEW_PHONE
         _send(socket, approvalPayload);
         print('[SERVER_SENT_APPROVAL_TO_NEW_PHONE] requestId=${foundReq.requestId} userId=${foundReq.userId} deviceId=${foundReq.deviceId} status=APPROVED');
+      } else if (foundReq.status == 'REVOKED') {
+        _send(socket, {
+          'type': 'device_revoked',
+          'requestId': foundReq.requestId,
+          'userId': foundReq.userId,
+          'deviceId': foundReq.deviceId,
+          'status': 'REVOKED',
+          'revokedAt': foundReq.updatedAt ?? DateTime.now().millisecondsSinceEpoch,
+        });
       } else {
         _send(socket, {
           'type': 'check_status_result',
@@ -547,6 +586,116 @@ class SignalingServer {
         'userId': userId,
         'deviceId': deviceId,
         'status': 'NOT_FOUND',
+      });
+    }
+  }
+
+  void _handleAuthorizeAppAccess(WebSocket socket, Map<String, dynamic> map) {
+    final requestId = (map['requestId'] ?? map['request_id'] ?? '') as String;
+    final userId = (map['userId'] ?? map['user_id'] ?? '') as String;
+    final deviceId = (map['deviceId'] ?? map['device_id'] ?? '') as String;
+
+    final session = _clients[socket];
+    if (session != null) {
+      if (deviceId.isNotEmpty) session.deviceId = deviceId;
+      if (userId.isNotEmpty) session.userId = userId;
+      if (requestId.isNotEmpty) session.requestId = requestId;
+    }
+
+    print('[SERVER_AUTHORIZE_APP_ACCESS] requestId=$requestId userId=$userId deviceId=$deviceId');
+
+    // Root developer is always approved
+    if (userId == 'developer_root') {
+      _send(socket, {
+        'type': 'authorize_app_access_result',
+        'isAuthorized': true,
+        'status': 'APPROVED',
+        'role': 'DEVELOPER',
+        'userId': userId,
+        'deviceId': deviceId,
+        'permissions': {
+          'can_view': 1,
+          'can_add': 1,
+          'can_edit': 1,
+          'can_delete': 1,
+          'can_search': 1,
+          'can_pdf': 1,
+          'can_manage_khajani': 1,
+          'can_sync': 1,
+        },
+      });
+      return;
+    }
+
+    PendingRequest? foundReq;
+    if (requestId.isNotEmpty && _pendingRequests.containsKey(requestId)) {
+      final req = _pendingRequests[requestId]!;
+      final userMatch = userId.isEmpty || req.userId.isEmpty || req.userId == userId;
+      final devMatch = deviceId.isEmpty || req.deviceId.isEmpty || req.deviceId == deviceId;
+      if (userMatch && devMatch) {
+        foundReq = req;
+      }
+    } else {
+      for (final req in _pendingRequests.values) {
+        final reqMatch = requestId.isEmpty || req.requestId == requestId;
+        final userMatch = userId.isEmpty || req.userId == userId;
+        final devMatch = deviceId.isEmpty || req.deviceId == deviceId;
+        if (reqMatch && userMatch && devMatch) {
+          foundReq = req;
+          break;
+        }
+      }
+    }
+
+    if (foundReq != null) {
+      if (foundReq.status == 'APPROVED') {
+        _send(socket, {
+          'type': 'authorize_app_access_result',
+          'isAuthorized': true,
+          'status': 'APPROVED',
+          'role': foundReq.approvedRole ?? foundReq.requestedRole,
+          'permissions': foundReq.permissions,
+          'userId': foundReq.userId,
+          'deviceId': foundReq.deviceId,
+          'requestId': foundReq.requestId,
+          'updatedAt': foundReq.updatedAt ?? DateTime.now().millisecondsSinceEpoch,
+        });
+      } else if (foundReq.status == 'REVOKED') {
+        _send(socket, {
+          'type': 'authorize_app_access_result',
+          'isAuthorized': false,
+          'status': 'REVOKED',
+          'userId': foundReq.userId,
+          'deviceId': foundReq.deviceId,
+          'message': 'Access Revoked. Contact Developer.',
+        });
+      } else if (foundReq.status == 'REJECTED') {
+        _send(socket, {
+          'type': 'authorize_app_access_result',
+          'isAuthorized': false,
+          'status': 'REJECTED',
+          'userId': foundReq.userId,
+          'deviceId': foundReq.deviceId,
+          'message': 'Request rejected by Developer.',
+        });
+      } else {
+        _send(socket, {
+          'type': 'authorize_app_access_result',
+          'isAuthorized': false,
+          'status': 'PENDING',
+          'userId': foundReq.userId,
+          'deviceId': foundReq.deviceId,
+          'message': 'Developer approval pending.',
+        });
+      }
+    } else {
+      _send(socket, {
+        'type': 'authorize_app_access_result',
+        'isAuthorized': false,
+        'status': 'NOT_FOUND',
+        'userId': userId,
+        'deviceId': deviceId,
+        'message': 'Device not registered.',
       });
     }
   }
@@ -627,10 +776,44 @@ class SignalingServer {
     final permissions = map['permissions'] as Map<String, dynamic>?;
 
     // STEP 3: SERVER_RECEIVED_APPROVAL
-    print('[SERVER_RECEIVED_APPROVAL] requestId=$requestId userId=$userId deviceId=$targetDeviceId status=$status');
+    print('[SERVER_RECEIVED_APPROVAL] requestId=$requestId userId=$userId deviceId=$targetDeviceId status=$status role=$role');
 
-    // Update persistent request status (DO NOT DELETE - keeps record for offline recovery & status checks)
     final now = DateTime.now().millisecondsSinceEpoch;
+
+    // If approved as LATEST_KHAJANI, demote existing LATEST_KHAJANI
+    if (role == 'LATEST_KHAJANI') {
+      for (final req in _pendingRequests.values) {
+        if (req.requestId != requestId && req.approvedRole == 'LATEST_KHAJANI') {
+          req.approvedRole = 'OLD_KHAJANI';
+          req.permissions = {
+            'canView': true,
+            'canAdd': false,
+            'canEdit': false,
+            'canDelete': false,
+            'canSearch': true,
+            'canPdf': true,
+            'canManageKhajani': false,
+            'canSync': false,
+          };
+          req.updatedAt = now;
+
+          for (final client in _clients.values) {
+            if (client.deviceId == req.deviceId || client.userId == req.userId) {
+              client.isMaster = false;
+              client.userRole = 'OLD_KHAJANI';
+              _send(client.socket, {
+                'type': 'role_updated',
+                'role': 'OLD_KHAJANI',
+                'permissions': req.permissions,
+                'isMaster': false,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Update persistent request status
     if (requestId.isNotEmpty && _pendingRequests.containsKey(requestId)) {
       final req = _pendingRequests[requestId]!;
       req.status = status;
@@ -643,7 +826,7 @@ class SignalingServer {
         userId: userId,
         userName: (map['userName'] ?? map['user_name'] ?? '') as String,
         deviceId: targetDeviceId,
-        deviceName: '',
+        deviceName: (map['deviceName'] ?? map['device_name'] ?? 'Android Device') as String,
         requestType: 'NEW_ACCOUNT',
         requestedRole: role,
         createdAt: now,
@@ -667,14 +850,13 @@ class SignalingServer {
     };
 
     // STEP 4: SERVER_FOUND_TARGET_DEVICE
-    // Match criteria: Exact match on requestId + userId + deviceId (critical matching, no name-only match)
     ClientSession? targetClient;
     for (final client in _clients.values) {
       if (!client.isDeveloper) {
         final matchesDevice = client.deviceId != null && client.deviceId == targetDeviceId;
         final matchesUser = client.userId == null || client.userId!.isEmpty || client.userId == userId;
         final matchesReq = client.requestId == null || client.requestId!.isEmpty || client.requestId == requestId;
-        if (matchesDevice && matchesUser && matchesReq) {
+        if (matchesDevice && (matchesUser || matchesReq)) {
           targetClient = client;
           break;
         }
@@ -683,9 +865,11 @@ class SignalingServer {
 
     bool delivered = false;
     if (targetClient != null) {
+      if (role == 'LATEST_KHAJANI') {
+        targetClient.isMaster = true;
+        targetClient.userRole = 'LATEST_KHAJANI';
+      }
       print('[SERVER_FOUND_TARGET_DEVICE] requestId=$requestId userId=$userId deviceId=$targetDeviceId status=$status');
-
-      // STEP 5: SERVER_SENT_APPROVAL_TO_NEW_PHONE
       _send(targetClient.socket, approvalPayload);
       delivered = true;
       print('[SERVER_SENT_APPROVAL_TO_NEW_PHONE] requestId=$requestId userId=$userId deviceId=$targetDeviceId status=$status');
@@ -693,7 +877,6 @@ class SignalingServer {
       print('[SERVER_OFFLINE_SAVED] Target device $targetDeviceId ($userId) is currently offline. Status saved as $status for offline recovery.');
     }
 
-    // Acknowledge to developer
     _send(socket, {
       'type': 'approval_dispatched',
       'requestId': requestId,
@@ -701,7 +884,9 @@ class SignalingServer {
       'userId': userId,
       'deliveredDirectly': delivered,
       'status': status,
+      'role': role,
     });
+    _broadcastAllRequestsToDevelopers();
   }
 
   void _handleDeviceRejection(WebSocket socket, Map<String, dynamic> map) {
@@ -727,7 +912,6 @@ class SignalingServer {
       'updatedAt': DateTime.now().millisecondsSinceEpoch,
     };
 
-    // Forward to target device if connected
     for (final client in _clients.values) {
       if (client.deviceId == targetDeviceId || (userId.isNotEmpty && client.userId == userId)) {
         _send(client.socket, rejectionPayload);
@@ -740,6 +924,7 @@ class SignalingServer {
       'targetDeviceId': targetDeviceId,
       'userId': userId,
     });
+    _broadcastAllRequestsToDevelopers();
   }
 
   void _handlePermissionUpdate(WebSocket socket, Map<String, dynamic> map) {
@@ -748,6 +933,15 @@ class SignalingServer {
     final permissions = map['permissions'] as Map<String, dynamic>?;
 
     print('[PERMISSION] Updating permissions for device $targetDeviceId / user $userId');
+
+    for (final req in _pendingRequests.values) {
+      if ((targetDeviceId != null && targetDeviceId.isNotEmpty && req.deviceId == targetDeviceId) ||
+          (userId != null && userId.isNotEmpty && req.userId == userId)) {
+        req.permissions = permissions;
+        req.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      }
+    }
+    _savePendingRequestsToFile();
 
     final payload = {
       'type': 'permissions_updated',
@@ -758,15 +952,26 @@ class SignalingServer {
     };
 
     for (final client in _clients.values) {
-      if (client.deviceId == targetDeviceId || (userId != null && client.userId == userId)) {
+      if ((targetDeviceId != null && client.deviceId == targetDeviceId) ||
+          (userId != null && client.userId == userId)) {
         _send(client.socket, payload);
       }
     }
+    _broadcastAllRequestsToDevelopers();
   }
 
   void _handleDeviceRevoke(WebSocket socket, Map<String, dynamic> map) {
-    final targetDeviceId = map['deviceId'] as String?;
+    final targetDeviceId = (map['deviceId'] ?? map['targetDeviceId']) as String?;
+    if (targetDeviceId == null || targetDeviceId.isEmpty) return;
     print('[REVOKE] Revoking device $targetDeviceId');
+
+    for (final req in _pendingRequests.values) {
+      if (req.deviceId == targetDeviceId) {
+        req.status = 'REVOKED';
+        req.updatedAt = DateTime.now().millisecondsSinceEpoch;
+      }
+    }
+    _savePendingRequestsToFile();
 
     final payload = {
       'type': 'device_revoked',
@@ -779,6 +984,143 @@ class SignalingServer {
         _send(client.socket, payload);
       }
     }
+
+    _send(socket, {
+      'type': 'device_revoked_ack',
+      'deviceId': targetDeviceId,
+      'status': 'REVOKED',
+    });
+    _broadcastAllRequestsToDevelopers();
+  }
+
+  void _handleDeviceRestore(WebSocket socket, Map<String, dynamic> map) {
+    final targetDeviceId = (map['deviceId'] ?? map['targetDeviceId']) as String?;
+    if (targetDeviceId == null || targetDeviceId.isEmpty) return;
+    print('[RESTORE] Restoring device $targetDeviceId');
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    String? restoredUserId;
+    for (final req in _pendingRequests.values) {
+      if (req.deviceId == targetDeviceId) {
+        req.status = 'APPROVED';
+        req.approvedRole = req.approvedRole ?? 'OLD_KHAJANI';
+        req.permissions ??= {
+          'canView': true,
+          'canAdd': false,
+          'canEdit': false,
+          'canDelete': false,
+          'canSearch': true,
+          'canPdf': true,
+          'canManageKhajani': false,
+          'canSync': false,
+        };
+        req.updatedAt = now;
+        restoredUserId = req.userId;
+      }
+    }
+    _savePendingRequestsToFile();
+
+    final payload = {
+      'type': 'device_approval_result',
+      'deviceId': targetDeviceId,
+      'userId': restoredUserId,
+      'status': 'APPROVED',
+      'role': 'OLD_KHAJANI',
+      'updatedAt': now,
+    };
+
+    for (final client in _clients.values) {
+      if (client.deviceId == targetDeviceId) {
+        _send(client.socket, payload);
+      }
+    }
+
+    _send(socket, {
+      'type': 'device_restored_ack',
+      'deviceId': targetDeviceId,
+      'status': 'APPROVED',
+    });
+    _broadcastAllRequestsToDevelopers();
+  }
+
+  void _handleSetLatestKhajani(WebSocket socket, Map<String, dynamic> map) {
+    final targetUserId = map['userId'] as String? ?? '';
+    final targetDeviceId = map['deviceId'] as String? ?? '';
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    print('[LATEST_KHAJANI] Setting Latest Khajani user=$targetUserId device=$targetDeviceId');
+
+    // Demote current Latest Khajani
+    for (final req in _pendingRequests.values) {
+      if (req.approvedRole == 'LATEST_KHAJANI' && req.userId != targetUserId) {
+        req.approvedRole = 'OLD_KHAJANI';
+        req.permissions = {
+          'canView': true,
+          'canAdd': false,
+          'canEdit': false,
+          'canDelete': false,
+          'canSearch': true,
+          'canPdf': true,
+          'canManageKhajani': false,
+          'canSync': false,
+        };
+        req.updatedAt = now;
+
+        for (final client in _clients.values) {
+          if (client.deviceId == req.deviceId || client.userId == req.userId) {
+            client.isMaster = false;
+            client.userRole = 'OLD_KHAJANI';
+            _send(client.socket, {
+              'type': 'role_updated',
+              'role': 'OLD_KHAJANI',
+              'permissions': req.permissions,
+              'isMaster': false,
+            });
+          }
+        }
+      }
+    }
+
+    // Promote new Latest Khajani
+    for (final req in _pendingRequests.values) {
+      if (req.userId == targetUserId || (targetDeviceId.isNotEmpty && req.deviceId == targetDeviceId)) {
+        req.approvedRole = 'LATEST_KHAJANI';
+        req.status = 'APPROVED';
+        req.permissions = {
+          'canView': true,
+          'canAdd': true,
+          'canEdit': true,
+          'canDelete': true,
+          'canSearch': true,
+          'canPdf': true,
+          'canManageKhajani': true,
+          'canSync': true,
+        };
+        req.updatedAt = now;
+
+        for (final client in _clients.values) {
+          if (client.deviceId == req.deviceId || client.userId == req.userId) {
+            client.isMaster = true;
+            client.userRole = 'LATEST_KHAJANI';
+            _send(client.socket, {
+              'type': 'role_updated',
+              'role': 'LATEST_KHAJANI',
+              'permissions': req.permissions,
+              'isMaster': true,
+            });
+          }
+        }
+      }
+    }
+    _savePendingRequestsToFile();
+
+    _send(socket, {
+      'type': 'latest_khajani_updated',
+      'userId': targetUserId,
+      'deviceId': targetDeviceId,
+      'status': 'OK',
+    });
+    _broadcastAllRequestsToDevelopers();
   }
 
   void _handleFinancialChange(WebSocket socket, Map<String, dynamic> map) {
@@ -827,6 +1169,43 @@ class SignalingServer {
     _send(socket, {
       'type': 'pending_requests_list',
       'requests': list,
+    });
+  }
+
+  void _sendAllRequestsToDeveloper(WebSocket socket) {
+    final list = _pendingRequests.values.map((r) => r.toMap()).toList();
+    _send(socket, {
+      'type': 'all_requests_list',
+      'requests': list,
+    });
+  }
+
+  void _sendConnectedClientsToDeveloper(WebSocket socket) {
+    final clients = _clients.values.map((c) => {
+      'deviceId': c.deviceId ?? '',
+      'userId': c.userId ?? '',
+      'userName': c.userName ?? '',
+      'role': c.role,
+      'userRole': c.userRole ?? '',
+      'isMaster': c.isMaster,
+      'connectedAt': c.connectedAt.millisecondsSinceEpoch,
+    }).toList();
+    _send(socket, {
+      'type': 'connected_clients_list',
+      'clients': clients,
+    });
+  }
+
+  void _broadcastAllRequestsToDevelopers() {
+    final list = _pendingRequests.values.map((r) => r.toMap()).toList();
+    _broadcastToDevelopers({
+      'type': 'all_requests_list',
+      'requests': list,
+    });
+    final pendingList = _pendingRequests.values.where((r) => r.status == 'PENDING').map((r) => r.toMap()).toList();
+    _broadcastToDevelopers({
+      'type': 'pending_requests_list',
+      'requests': pendingList,
     });
   }
 

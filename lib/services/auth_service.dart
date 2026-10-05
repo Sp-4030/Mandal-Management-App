@@ -1235,9 +1235,11 @@ class AuthService {
   // ============================================================
 
   Future<void> logout() async {
-    final db = await DatabaseHelper.instance.database;
-    await _clearSession(db);
     _currentUser = null;
+    try {
+      final db = await DatabaseHelper.instance.database;
+      await _clearSession(db);
+    } catch (_) {}
   }
 
   Future<void> _clearSession(DatabaseExecutor db) async {

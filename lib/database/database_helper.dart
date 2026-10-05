@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:io';
 import 'dart:convert';
 
@@ -7,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import '../services/auth_service.dart';
 import '../services/device_service.dart';
 import '../services/remote_sync_service.dart';
+import '../services/security_enforcement_service.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
@@ -93,9 +95,10 @@ class DatabaseHelper {
   void _assertDeviceNotRevoked() {
     if (_isDeviceRevoked) {
       throw StateError(
-        'हे डिव्हाइस रद्द (Revoked) केले आहे. आर्थिक डेटा ॲक्सेस किंवा बदल करता येणार नाही.',
+        'Access Revoked. Contact Developer.',
       );
     }
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized();
   }
 
   void assertDeviceNotRevokedForTesting() => _assertDeviceNotRevoked();
@@ -114,6 +117,7 @@ class DatabaseHelper {
   }
 
   void _assertCanAdd() {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.add);
     if (AuthService.instance.isDeveloper) return;
     _assertCanModifyData();
     if (!AuthService.instance.canAdd) {
@@ -122,6 +126,7 @@ class DatabaseHelper {
   }
 
   void _assertCanEdit() {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.edit);
     if (AuthService.instance.isDeveloper) return;
     _assertCanModifyData();
     if (!AuthService.instance.canEdit) {
@@ -130,6 +135,7 @@ class DatabaseHelper {
   }
 
   void _assertCanDelete() {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.delete);
     if (AuthService.instance.isDeveloper) return;
     _assertCanModifyData();
     if (!AuthService.instance.canDelete) {
@@ -138,6 +144,7 @@ class DatabaseHelper {
   }
 
   void _assertCanSync() {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.sync);
     _assertDeviceNotRevoked();
     if (AuthService.instance.isDeveloper) return;
     if (!AuthService.instance.canView && !AuthService.instance.canSync) {
@@ -147,8 +154,15 @@ class DatabaseHelper {
     }
   }
 
+  void _assertCanView() {
+    SecurityEnforcementService.instance.assertOnlineAndAuthorized(action: SecurityAction.view);
+  }
+
+  void assertCanViewForTesting() => _assertCanView();
+
   void _assertCanSyncData() {
     _assertDeviceNotRevoked();
+    _assertCanView();
     if (AuthService.instance.isDeveloper) return;
     if (!AuthService.instance.canView) {
       throw StateError(
