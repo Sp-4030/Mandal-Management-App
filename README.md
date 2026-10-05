@@ -19,11 +19,19 @@ The system is partitioned into two independent applications communicating via a 
    - **Zero Financial Data**: Developer Management App contains **no financial tables**, **no SQLite database**, and **no financial business logic**.
 
 2. 📱 **Hindvi App — Financial / Khajani App (`lib/`)**
-   - The primary Mandal financial app with local SQLite persistence (`hindvi_latest.db`).
-   - All 7 financial tables: `vargani`, `prasad_dengani`, `prasad_sahitya`, `aarti_vargani`, `kharch`, `mahaprasad_kharch`, and `previous_balance`.
-   - Two-way Delta Synchronization across authorized phones.
-   - Full Devanagari Unicode support and high-resolution Annual Report PDF generation.
-   - Mandatory Internet Access and Server Authorization guards at all access points.
+   - The primary Mandal financial app containing **strictly user-side functionality**:
+     - Login, Registration & Approval status checking
+     - User's assigned role & effective granular permissions display
+     - **Vargani**, **Prasad Dengani**, **Prasad Sahitya**, **Aarti Vargani**
+     - **2025 Kharch**, **Mahaprasad Kharch**, **Search**, **Annual Report PDF generation**
+     - Two-way Delta Synchronization across authorized phones
+     - Settings (Mandal Data Transfer, Backup, Restore, Recovery Data, App Updates, Device ID, Server config, Logout)
+   - **Complete Removal of Developer Controls**:
+     - The old `"खजानी व्यवस्थापन"` Developer Control screen, routes, and Settings section have been completely removed.
+     - User management, device approvals, role/permission management, and revocation controls are not present or accessible in this app.
+     - Developer management code paths throw explicit security errors to prevent unauthorized execution.
+     - Hindvi App securely receives status, roles, permissions, and revocation from the PC WebSocket server without providing management controls.
+   - All 7 financial tables preserved in local SQLite (`hindvi_latest.db`).
 
 3. 🖥️ **PC WebSocket Signaling Server (`server/`)**
    - In-memory WebSocket communication & authorization relay (Port 8080 / ngrok).
@@ -162,7 +170,7 @@ flowchart LR
 
 ## 📊 Complete Test Suites & Verification
 
-### 1. Hindvi App (`hindvi_app`) — 147 Tests Passing (100%)
+### 1. Hindvi App (`hindvi_app`) — 145 Tests Passing (100%)
 - **`test/mandatory_internet_security_test.dart` (14 Tests)**:
   - Internet OFF startup blocks access and shows `NoInternetScreen`.
   - Offline financial operations throw `StateError` with mandatory requirement message.

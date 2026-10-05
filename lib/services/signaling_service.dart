@@ -214,7 +214,7 @@ class SignalingService {
         final pendingReq = await DeviceService.instance.getLatestPendingRequest();
         final isMasterPhone = (user?.isLatestKhajani ?? false) && !AuthService.instance.isOldKhajani;
         registerClient(
-          role: AuthService.instance.isDeveloper ? 'DEVELOPER' : (isMasterPhone ? 'MASTER' : 'CLIENT'),
+          role: isMasterPhone ? 'MASTER' : 'CLIENT',
           deviceId: devId,
           userId: user?.userId ?? pendingReq?.userId,
           userName: user?.name ?? pendingReq?.userName,
@@ -654,7 +654,7 @@ class SignalingService {
 
   /// Request pending requests list (for Developer)
   void requestPendingList() {
-    sendMessage({'type': 'get_pending_requests'});
+    throw StateError('Developer Management is now handled exclusively by Developer App.');
   }
 
   /// Query the current status of an existing request from the server (NO new request is created)
@@ -798,22 +798,7 @@ class SignalingService {
     required String role,
     required KhajaniPermissions permissions,
   }) {
-    // STEP 2: APPROVAL_SENT_TO_SERVER
-    print('[APPROVAL_SENT_TO_SERVER] requestId=$requestId userId=$userId deviceId=$deviceId status=APPROVED');
-
-    if (!isConnected) {
-      connect();
-    }
-
-    sendMessage({
-      'type': 'device_approval',
-      'requestId': requestId,
-      'deviceId': deviceId,
-      'userId': userId,
-      'status': status,
-      'role': role,
-      'permissions': permissions.toMap(),
-    });
+    throw StateError('Developer Management is now handled exclusively by Developer App.');
   }
 
   /// Send device rejection result (by Developer)
@@ -822,13 +807,7 @@ class SignalingService {
     required String deviceId,
     required String userId,
   }) {
-    sendMessage({
-      'type': 'device_rejection',
-      'requestId': requestId,
-      'deviceId': deviceId,
-      'userId': userId,
-      'status': 'REJECTED',
-    });
+    throw StateError('Developer Management is now handled exclusively by Developer App.');
   }
 
   /// Send permission update to a specific device/user (by Developer)
@@ -837,20 +816,12 @@ class SignalingService {
     required String userId,
     required KhajaniPermissions permissions,
   }) {
-    sendMessage({
-      'type': 'permission_update',
-      'deviceId': deviceId,
-      'userId': userId,
-      'permissions': permissions.toMap(),
-    });
+    throw StateError('Developer Management is now handled exclusively by Developer App.');
   }
 
   /// Revoke a device remotely (by Developer)
   void sendDeviceRevoke({required String deviceId}) {
-    sendMessage({
-      'type': 'device_revoke',
-      'deviceId': deviceId,
-    });
+    throw StateError('Developer Management is now handled exclusively by Developer App.');
   }
 
   /// Forward WebRTC signals (offer, answer, ice candidates)

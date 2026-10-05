@@ -65,12 +65,6 @@ class AuthService {
     _currentUser = user;
   }
 
-  void _assertIsDeveloper() {
-    if (!isDeveloper) {
-      throw StateError('केवळ Developer लाच ही कृती करण्याची परवानगी आहे.');
-    }
-  }
-
   // ============================================================
   // PASSWORD HASHING & SECURITY
   // ============================================================
@@ -653,7 +647,7 @@ class AuthService {
   }
 
   // ============================================================
-  // DEVELOPER ADMIN CONTROLS
+  // DEVELOPER ADMIN CONTROLS (SEPARATED TO DEVELOPER APP)
   // ============================================================
 
   Future<KhajaniUser> createKhajaniByDeveloper({
@@ -662,46 +656,7 @@ class AuthService {
     required String role,
     required KhajaniPermissions permissions,
   }) async {
-    _assertIsDeveloper();
-
-    final trimmedName = name.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (trimmedName.isEmpty) {
-      throw ArgumentError('नाव आवश्यक आहे.');
-    }
-    if (trimmedName.toLowerCase() == developerName.toLowerCase()) {
-      throw ArgumentError("'$developerName' हे नाव राखीव आहे.");
-    }
-    if (role == KhajaniRole.developer) {
-      throw ArgumentError('कोणत्याही वापरकर्त्याला Developer बनवता येत नाही.');
-    }
-    if (role != KhajaniRole.latestKhajani && role != KhajaniRole.oldKhajani) {
-      throw ArgumentError('अवैध भूमिका (Invalid Role).');
-    }
-    if (password.length < 4) {
-      throw ArgumentError('पासवर्ड किमान ४ अक्षरांचा असावा.');
-    }
-
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final salt = generateSalt();
-    final hash = hashPassword(password, salt);
-    final userId = generateUniqueUserId();
-
-    final newUser = KhajaniUser(
-      userId: userId,
-      name: trimmedName,
-      passwordHash: hash,
-      salt: salt,
-      role: role,
-      status: KhajaniStatus.approved,
-      isActive: true,
-      permissions: permissions,
-      createdAt: now,
-      updatedAt: now,
-    );
-
-    await db.insert('khajani_users', newUser.toMap());
-    return newUser;
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   // ============================================================
@@ -715,142 +670,7 @@ class AuthService {
     String? deviceId,
     String? requestId,
   }) async {
-    _assertIsDeveloper();
-
-    if (userId == developerUserId) {
-      throw StateError('Developer खाते आधीच मंजूर आहे.');
-    }
-    if (role == KhajaniRole.developer) {
-      throw ArgumentError('कोणत्याही वापरकर्त्याला Developer बनवता येत नाही.');
-    }
-    if (role != KhajaniRole.latestKhajani && role != KhajaniRole.oldKhajani) {
-      throw ArgumentError('अवैध भूमिका (Invalid Role).');
-    }
-
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    var targetUser = await getKhajaniById(userId);
-
-    // If targetUser is null, find in device_requests and create account entry
-    if (targetUser == null) {
-      final reqs = await DeviceService.instance.getDeviceRequests();
-      final match = reqs.firstWhere(
-        (r) => r.userId == userId || (requestId != null && r.requestId == requestId),
-        orElse: () => DeviceRequestModel(
-          requestId: requestId ?? 'req_$now',
-          userId: userId,
-          userName: 'नवीन वापरकर्ता',
-          deviceId: deviceId ?? '',
-          deviceName: 'Android Phone',
-          createdAt: now,
-          updatedAt: now,
-        ),
-      );
-
-      final salt = generateSalt();
-      targetUser = KhajaniUser(
-        userId: userId,
-        name: match.userName,
-        passwordHash: '',
-        salt: salt,
-        role: role,
-        status: KhajaniStatus.approved,
-        isActive: true,
-        permissions: permissions,
-        createdAt: match.createdAt,
-        updatedAt: now,
-      );
-
-      await db.insert(
-        'khajani_users',
-        targetUser.toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    } else {
-      if (targetUser.isDeveloper) {
-        throw StateError('Developer खात्यात बदल करता येत नाही.');
-      }
-    }
-
-    await db.transaction((txn) async {
-      // If approved as LATEST_KHAJANI, demote existing LATEST_KHAJANI to OLD_KHAJANI
-      if (role == KhajaniRole.latestKhajani) {
-        await txn.update(
-          'khajani_users',
-          {
-            'role': KhajaniRole.oldKhajani,
-            'can_add': 0,
-            'can_edit': 0,
-            'can_delete': 0,
-            'can_manage_khajani': 0,
-            'can_sync': 0,
-            'updated_at': now,
-          },
-          where: 'role = ? AND user_id != ?',
-          whereArgs: [KhajaniRole.latestKhajani, userId],
-        );
-      }
-
-      await txn.update(
-        'khajani_users',
-        {
-          'role': role,
-          'status': KhajaniStatus.approved,
-          'is_active': 1,
-          ...permissions.toMap(),
-          'updated_at': now,
-        },
-        where: 'user_id = ?',
-        whereArgs: [userId],
-      );
-    });
-
-    if (_currentUser?.userId == userId) {
-      _currentUser = _currentUser!.copyWith(
-        role: role,
-        status: KhajaniStatus.approved,
-        isActive: true,
-        permissions: permissions,
-        updatedAt: now,
-      );
-    }
-
-    // Update device request and device status locally
-    try {
-      final requests = await DeviceService.instance.getDeviceRequests();
-      final matchingReq = requests.where((r) => r.userId == userId || (requestId != null && r.requestId == requestId)).toList();
-      for (final req in matchingReq) {
-        await DeviceService.instance.updateDeviceRequestStatus(req.requestId, DeviceStatus.approved);
-        if (req.deviceId.isNotEmpty) {
-          await DeviceService.instance.approveDevice(req.deviceId);
-        }
-      }
-      if (deviceId != null && deviceId.isNotEmpty) {
-        await DeviceService.instance.approveDevice(deviceId);
-      }
-
-      // Notify through PC Signaling Server
-      final targetDev = (deviceId != null && deviceId.isNotEmpty && deviceId != 'N/A')
-          ? deviceId
-          : (matchingReq.isNotEmpty ? matchingReq.first.deviceId : '');
-      final reqId = (requestId != null && requestId.isNotEmpty)
-          ? requestId
-          : (matchingReq.isNotEmpty ? matchingReq.first.requestId : 'req_$userId');
-
-      // STEP 1: DEVELOPER_APPROVED
-      print('[DEVELOPER_APPROVED] requestId=$reqId userId=$userId deviceId=$targetDev status=APPROVED');
-
-      // STEP 2: APPROVAL_SENT_TO_SERVER logged inside sendDeviceApproval
-      SignalingService.instance.sendDeviceApproval(
-        requestId: reqId,
-        deviceId: targetDev,
-        userId: userId,
-        status: KhajaniStatus.approved,
-        role: role,
-        permissions: permissions,
-      );
-    } catch (_) {}
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   /// Helper to apply approved status to local SQLite database and refresh session
@@ -973,38 +793,7 @@ class AuthService {
     required String userId,
     String? deviceId,
   }) async {
-    _assertIsDeveloper();
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    // Delete or mark rejected in device_requests
-    await DeviceService.instance.deleteDeviceRequest(requestId);
-
-    // If there is a pending user in khajani_users, remove
-    if (userId.isNotEmpty && userId != developerUserId) {
-      final user = await getKhajaniById(userId);
-      if (user != null && user.isPending) {
-        await db.delete('khajani_users', where: 'user_id = ?', whereArgs: [userId]);
-      }
-    }
-
-    if (deviceId != null && deviceId.isNotEmpty) {
-      await db.update(
-        'devices',
-        {'status': DeviceStatus.rejected, 'updated_at': now},
-        where: 'device_id = ?',
-        whereArgs: [deviceId],
-      );
-    }
-
-    // Send rejection signal
-    if (SignalingService.instance.isConnected) {
-      SignalingService.instance.sendDeviceRejection(
-        requestId: requestId,
-        deviceId: deviceId ?? '',
-        userId: userId,
-      );
-    }
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   // ============================================================
@@ -1034,200 +823,37 @@ class AuthService {
     required String userId,
     required String newRole,
   }) async {
-    _assertIsDeveloper();
-
-    if (userId == developerUserId) {
-      throw StateError('Developer खात्याचा रोल बदलता येत नाही.');
-    }
-    if (newRole == KhajaniRole.developer) {
-      throw ArgumentError('कोणत्याही वापरकर्त्याला Developer बनवता येत नाही.');
-    }
-    if (newRole != KhajaniRole.latestKhajani &&
-        newRole != KhajaniRole.oldKhajani) {
-      throw ArgumentError('अवैध भूमिका (Invalid Role).');
-    }
-
-    final targetUser = await getKhajaniById(userId);
-    if (targetUser != null && targetUser.isDeveloper) {
-      throw StateError('Developer खात्याचा रोल बदलता येत नाही.');
-    }
-
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    await db.update(
-      'khajani_users',
-      {
-        'role': newRole,
-        'updated_at': now,
-      },
-      where: 'user_id = ?',
-      whereArgs: [userId],
-    );
-
-    if (_currentUser?.userId == userId) {
-      _currentUser = _currentUser!.copyWith(role: newRole, updatedAt: now);
-    }
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   Future<void> updateKhajaniPermissions({
     required String userId,
     required KhajaniPermissions permissions,
   }) async {
-    _assertIsDeveloper();
-
-    if (userId == developerUserId) {
-      throw StateError('Developer खात्याच्या परवानग्या बदलता येत नाहीत.');
-    }
-    final targetUser = await getKhajaniById(userId);
-    if (targetUser != null && targetUser.isDeveloper) {
-      throw StateError('Developer खात्याच्या परवानग्या बदलता येत नाहीत.');
-    }
-
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    await db.update(
-      'khajani_users',
-      {
-        ...permissions.toMap(),
-        'updated_at': now,
-      },
-      where: 'user_id = ?',
-      whereArgs: [userId],
-    );
-
-    if (_currentUser?.userId == userId) {
-      _currentUser = _currentUser!.copyWith(
-        permissions: permissions,
-        updatedAt: now,
-      );
-    }
-
-    try {
-      if (SignalingService.instance.isConnected) {
-        SignalingService.instance.sendPermissionUpdate(
-          deviceId: '',
-          userId: userId,
-          permissions: permissions,
-        );
-      }
-    } catch (_) {}
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   Future<void> revokeDevice(String deviceId) async {
-    _assertIsDeveloper();
-    await DeviceService.instance.revokeDevice(deviceId);
-    try {
-      if (SignalingService.instance.isConnected) {
-        SignalingService.instance.sendDeviceRevoke(deviceId: deviceId);
-      }
-    } catch (_) {}
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   Future<void> restoreDevice(String deviceId) async {
-    _assertIsDeveloper();
-    await DeviceService.instance.approveDevice(deviceId);
-    try {
-      if (SignalingService.instance.isConnected) {
-        SignalingService.instance.sendDeviceApproval(
-          requestId: 'restore_$deviceId',
-          deviceId: deviceId,
-          userId: '',
-          status: DeviceStatus.approved,
-          role: KhajaniRole.oldKhajani,
-          permissions: const KhajaniPermissions.oldDefault(),
-        );
-      }
-    } catch (_) {}
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   Future<void> deleteDevice(String deviceId) async {
-    _assertIsDeveloper();
-    await DeviceService.instance.deleteDevice(deviceId);
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   Future<void> toggleKhajaniStatus({
     required String userId,
     required bool isActive,
   }) async {
-    _assertIsDeveloper();
-
-    if (userId == developerUserId) {
-      throw StateError('Developer खाते निष्क्रिय करता येत नाही.');
-    }
-    final targetUser = await getKhajaniById(userId);
-    if (targetUser != null && targetUser.isDeveloper) {
-      throw StateError('Developer खाते निष्क्रिय करता येत नाही.');
-    }
-
-    final db = await DatabaseHelper.instance.database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    await db.update(
-      'khajani_users',
-      {
-        'is_active': isActive ? 1 : 0,
-        'updated_at': now,
-      },
-      where: 'user_id = ?',
-      whereArgs: [userId],
-    );
-
-    if (!isActive) {
-      await db.update(
-        'khajani_session',
-        {
-          'user_id': null,
-          'keep_logged_in': 0,
-          'logged_in_at': null,
-        },
-        where: 'user_id = ?',
-        whereArgs: [userId],
-      );
-      if (_currentUser?.userId == userId) {
-        _currentUser = null;
-      }
-    } else if (_currentUser?.userId == userId) {
-      _currentUser = _currentUser!.copyWith(isActive: true, updatedAt: now);
-    }
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   Future<void> deleteKhajani({required String userId}) async {
-    _assertIsDeveloper();
-
-    if (userId == developerUserId) {
-      throw StateError('Developer खाते हटवता येत नाही.');
-    }
-    final targetUser = await getKhajaniById(userId);
-    if (targetUser != null && targetUser.isDeveloper) {
-      throw StateError('Developer खाते हटवता येत नाही.');
-    }
-
-    final db = await DatabaseHelper.instance.database;
-
-    await db.transaction((txn) async {
-      await txn.delete(
-        'khajani_users',
-        where: 'user_id = ?',
-        whereArgs: [userId],
-      );
-
-      await txn.update(
-        'khajani_session',
-        {
-          'user_id': null,
-          'keep_logged_in': 0,
-          'logged_in_at': null,
-        },
-        where: 'user_id = ?',
-        whereArgs: [userId],
-      );
-    });
-
-    if (_currentUser?.userId == userId) {
-      _currentUser = null;
-    }
+    throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
   }
 
   // ============================================================

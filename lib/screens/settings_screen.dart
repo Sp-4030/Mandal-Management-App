@@ -12,7 +12,6 @@ import '../services/device_service.dart';
 import '../services/remote_sync_service.dart';
 import '../services/signaling_service.dart';
 import 'app_update_screen.dart';
-import 'khajani_management_screen.dart';
 import 'login_screen.dart';
 import 'mandal_data_transfer_screen.dart';
 import 'recovery_data_screen.dart';
@@ -66,7 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSyncingFinancial = false;
 
   Future<void> _handleRemoteFinancialSync() async {
-    if (!_authService.canView && !_authService.canSync && !_authService.isDeveloper) {
+    if (!_authService.canView && !_authService.canSync) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('माहिती पाहण्याची किंवा सिंक करण्याची परवानगी नाही.'),
@@ -419,8 +418,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     const deepSaffron = Color(0xFFB94D00);
     final currentUser = _authService.currentUser;
-    final isDeveloper = _authService.isDeveloper;
-    final isLatest = _authService.isLatestKhajani;
 
     return Scaffold(
       appBar: AppBar(
@@ -555,62 +552,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
 
-          // Section 2: खजानी खाते व व्यवस्थापन
-          Text(
-            'खजानी व्यवस्थापन',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF25231F),
-                ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'खजानी माहिती, अधिकार हस्तांतरण आणि खाते नियंत्रण.',
-            style: TextStyle(
-              fontSize: 13,
-              color: Color(0xFF756A5D),
-            ),
-          ),
-          const SizedBox(height: 14),
-
-          // 2.1 Khajani Management Tile
-          _settingsOptionTile(
-            context: context,
-            icon: Icons.manage_accounts_outlined,
-            title: 'खजानी व्यवस्थापन',
-            description: isDeveloper
-                ? 'Developer Control: सर्व खाती, भूमिका व परवानग्या व्यवस्थापित करा.'
-                : 'चालू व माजी खजानींची यादी पहा आणि नवीन खजानी सेट करून अधिकार हस्तांतरित करा.',
-            badge: currentUser != null
-                ? (isDeveloper
-                    ? 'Developer (सर्वोच्च ॲडमिन)'
-                    : '${currentUser.name} (${isLatest ? "चालू" : "माजी"})')
-                : null,
-            onTap: () {
-              if (!_authService.canManageKhajani && !isDeveloper) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'खजानी व्यवस्थापन पाहण्याची किंवा बदलण्याची परवानगी आपल्या खात्याला नाही. कृपया Developer शी संपर्क साधा.',
-                    ),
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-                return;
-              }
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const KhajaniManagementScreen(),
-                ),
-              ).then((_) {
-                if (mounted) setState(() {});
-              });
-            },
-          ),
-          const SizedBox(height: 24),
-
-          // Section 3: रिमोट संप्रेषण व डिव्हाइस माहिती
+          // Section 2: रिमोट संप्रेषण व डिव्हाइस माहिती
           Text(
             'रिमोट संप्रेषण व डिव्हाइस',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(

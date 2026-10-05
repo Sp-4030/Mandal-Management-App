@@ -1503,18 +1503,17 @@ class _KhajaniLoginScreenState extends State<KhajaniLoginScreen> {
                               setState(() {
                                 _isFirstSetup = false;
                                 _errorMessage = null;
-                                _nameController.text =
-                                    AuthService.developerName;
+                                _nameController.clear();
                                 _passwordController.clear();
                               });
                             },
                             icon: const Icon(
-                              Icons.admin_panel_settings_outlined,
+                              Icons.arrow_back,
                               size: 18,
                               color: _deepSaffron,
                             ),
                             label: const Text(
-                              'Developer / नोंदणीकृत लॉगिन',
+                              'नोंदणीकृत लॉगिन',
                               style: TextStyle(
                                 color: _deepSaffron,
                                 fontWeight: FontWeight.w600,

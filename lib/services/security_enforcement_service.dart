@@ -319,10 +319,7 @@ class SecurityEnforcementService {
           }
           break;
         case SecurityAction.khajaniManagement:
-          if (!auth.canManageKhajani) {
-            throw StateError('खजानी व्यवस्थापनाची परवानगी नाही.');
-          }
-          break;
+          throw StateError('Developer Management is now handled exclusively by the separate Developer App.');
         case SecurityAction.sync:
           if (!auth.canSync) {
             throw StateError('डेटा सिंक करण्याची परवानगी (Sync Permission) नाही.');

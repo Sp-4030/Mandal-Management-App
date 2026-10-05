@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hindvi_app/database/database_helper.dart';
 import 'package:hindvi_app/models/khajani_user.dart';
-import 'package:hindvi_app/screens/khajani_management_screen.dart';
 import 'package:hindvi_app/screens/kharch_screen.dart';
 import 'package:hindvi_app/screens/login_screen.dart';
 import 'package:hindvi_app/screens/mahaprasad_kharch_screen.dart';
@@ -733,35 +732,9 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.textContaining('Developer'), findsWidgets);
-      expect(find.text('खजानी व्यवस्थापन'), findsNWidgets(2));
-    });
-
-    testWidgets('KhajaniManagementScreen displays Developer Control Panel banner for Developer', (
-      WidgetTester tester,
-    ) async {
-      AuthService.instance.setCurrentUserForTesting(
-        const KhajaniUser(
-          userId: AuthService.developerUserId,
-          name: AuthService.developerName,
-          passwordHash: 'h',
-          salt: 's',
-          role: KhajaniRole.developer,
-          createdAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
-
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: KhajaniManagementScreen(initialLoading: false),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-
-      expect(find.text('Developer Control Panel'), findsOneWidget);
-      expect(find.text('नवीन खजानी तयार करा'), findsOneWidget);
+      // Settings screen must NEVER display 'खजानी व्यवस्थापन' or 'Developer Control'
+      expect(find.text('खजानी व्यवस्थापन'), findsNothing);
+      expect(find.textContaining('Developer Control'), findsNothing);
     });
   });
 
@@ -859,151 +832,48 @@ void main() {
       expect(find.text('खजानी लॉगिन'), findsOneWidget);
     });
 
-    testWidgets('Developer sees Pending Requests tab with Name, Request Date, Status, APPROVE and DELETE', (
-      WidgetTester tester,
-    ) async {
-      AuthService.instance.setCurrentUserForTesting(
-        const KhajaniUser(
-          userId: AuthService.developerUserId,
-          name: AuthService.developerName,
-          passwordHash: 'h',
-          salt: 's',
-          role: KhajaniRole.developer,
-          createdAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
-
-      const pendingUser = KhajaniUser(
-        userId: 'khajani_test_pending_1',
+    test('Hindvi App evaluates approval status and user permissions without developer management UI', () {
+      const approvedUser = KhajaniUser(
+        userId: 'khajani_test_sep_1',
         name: 'अमित कदम',
         passwordHash: 'h',
         salt: 's',
-        role: KhajaniRole.oldKhajani,
-        status: KhajaniStatus.pending,
-        createdAt: 1775000000000,
-        updatedAt: 1775000000000,
+        role: KhajaniRole.latestKhajani,
+        status: KhajaniStatus.approved,
+        createdAt: 1000,
+        updatedAt: 1000,
       );
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: KhajaniManagementScreen(
-            initialLoading: false,
-            initialKhajanis: [pendingUser],
-            initialTabIndex: 1,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // Check Pending tab content
-      expect(find.text('अमित कदम'), findsOneWidget);
-      expect(find.textContaining('khajani_test_pending_1'), findsOneWidget);
-      expect(find.textContaining('Request Date:'), findsOneWidget);
-      expect(find.text('PENDING'), findsOneWidget);
-      expect(find.text('APPROVE'), findsOneWidget);
-      expect(find.text('DELETE'), findsOneWidget);
+      AuthService.instance.setCurrentUserForTesting(approvedUser);
+      expect(AuthService.instance.isLoggedIn, isTrue);
+      expect(AuthService.instance.isLatestKhajani, isTrue);
+      expect(AuthService.instance.canModify, isTrue);
+      expect(approvedUser.effectivePermissions.canView, isTrue);
+      expect(approvedUser.effectivePermissions.canAdd, isTrue);
     });
 
-    testWidgets('Tapping APPROVE opens approval dialog with Role choices and Permissions toggles', (
-      WidgetTester tester,
-    ) async {
-      AuthService.instance.setCurrentUserForTesting(
-        const KhajaniUser(
-          userId: AuthService.developerUserId,
-          name: AuthService.developerName,
-          passwordHash: 'h',
-          salt: 's',
-          role: KhajaniRole.developer,
-          createdAt: 1000,
-          updatedAt: 1000,
+    test('Developer Management controls in Hindvi App are blocked with StateError', () async {
+      expect(
+        () => AuthService.instance.approveKhajaniRequest(
+          userId: 'u1',
+          role: KhajaniRole.oldKhajani,
+          permissions: const KhajaniPermissions.oldDefault(),
         ),
+        throwsA(isA<StateError>()),
       );
 
-      const pendingUser = KhajaniUser(
-        userId: 'khajani_test_pending_1',
-        name: 'अमित कदम',
-        passwordHash: 'h',
-        salt: 's',
-        role: KhajaniRole.oldKhajani,
-        status: KhajaniStatus.pending,
-        createdAt: 1775000000000,
-        updatedAt: 1775000000000,
-      );
-
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: KhajaniManagementScreen(
-            initialLoading: false,
-            initialKhajanis: [pendingUser],
-            initialTabIndex: 1,
-          ),
+      expect(
+        () => AuthService.instance.rejectOrDeleteRequest(
+          requestId: 'r1',
+          userId: 'u1',
         ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('APPROVE'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('विनंती मंजूर करा (Approve Request)'), findsOneWidget);
-      expect(find.textContaining('वापरकर्ता: अमित कदम'), findsOneWidget);
-      expect(find.text('भूमिका (Role) निवडा:'), findsOneWidget);
-      expect(find.text('मंजूर करा (APPROVE)'), findsOneWidget);
-      expect(find.text('रद्द करा'), findsOneWidget);
-
-      await tester.tap(find.text('रद्द करा'));
-      await tester.pumpAndSettle();
-      expect(find.text('विनंती मंजूर करा (Approve Request)'), findsNothing);
-    });
-
-    testWidgets('Tapping DELETE opens confirmation dialog before permanently removing request', (
-      WidgetTester tester,
-    ) async {
-      AuthService.instance.setCurrentUserForTesting(
-        const KhajaniUser(
-          userId: AuthService.developerUserId,
-          name: AuthService.developerName,
-          passwordHash: 'h',
-          salt: 's',
-          role: KhajaniRole.developer,
-          createdAt: 1000,
-          updatedAt: 1000,
-        ),
+        throwsA(isA<StateError>()),
       );
 
-      const pendingUser = KhajaniUser(
-        userId: 'khajani_test_pending_1',
-        name: 'अमित कदम',
-        passwordHash: 'h',
-        salt: 's',
-        role: KhajaniRole.oldKhajani,
-        status: KhajaniStatus.pending,
-        createdAt: 1775000000000,
-        updatedAt: 1775000000000,
+      expect(
+        () => AuthService.instance.revokeDevice('dev_1'),
+        throwsA(isA<StateError>()),
       );
-
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: KhajaniManagementScreen(
-            initialLoading: false,
-            initialKhajanis: [pendingUser],
-            initialTabIndex: 1,
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('DELETE'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('विनंती हटवा (Delete Request)'), findsOneWidget);
-      expect(find.textContaining('अमित कदम'), findsWidgets);
-      expect(find.text('कायमचे हटवा (DELETE)'), findsOneWidget);
-      expect(find.text('रद्द करा'), findsOneWidget);
-
-      await tester.tap(find.text('रद्द करा'));
-      await tester.pumpAndSettle();
-      expect(find.text('विनंती हटवा (Delete Request)'), findsNothing);
     });
   });
 
